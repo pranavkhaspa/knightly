@@ -1,0 +1,30 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+      - "3000:3000"
+    volumes:
+      - falkordb-data:/data
+
+  nightshift:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - falkordb
+    environment:
+      NIGHTSHIFT_LISTEN: 0.0.0.0:8080
+      NIGHTSHIFT_ENV: development
+      NIGHTSHIFT_INSTANCE_ID: compose-edge
+      FALKORDB_URL: redis://falkordb:6379
+      FALKORDB_CONTROL_GRAPH: nightshift_control
+      FALKORDB_GRAPH: nightshift_u_demo
+      NIGHTSHIFT_ACTIONS_ENABLED: "false"
+    ports:
+      - "8080:8080"
+
+volumes:
+  falkordb-data:

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: nightshift
+    runtime: docker
+    dockerfilePath: ./deploy/docker/Dockerfile
+    plan: free
+    healthCheckPath: /health/live
+    envVars:
+      - key: NIGHTSHIFT_LISTEN
+        value: 0.0.0.0:8080
+      - key: NIGHTSHIFT_ENV
+        value: render
+      - key: NIGHTSHIFT_INSTANCE_ID
+        generateValue: true
+      - key: FALKORDB_URL
+        sync: false
+      - key: FALKORDB_CONTROL_GRAPH
+        value: nightshift_control
+      - key: FALKORDB_GRAPH
+        value: nightshift_u_demo
+      - key: NIGHTSHIFT_ACTIONS_ENABLED
+        value: "false"

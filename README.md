@@ -1,0 +1,172 @@
+# NightShift
+
+NightShift is an always-on developer intern built for the FalkorDB hackathon.
+It connects public technical signals to a user's active project, preserves
+decisions across sessions, coordinates bounded agents, and explains every
+recommendation through graph evidence.
+
+> **FalkorDB is the product store, not a visualization.**
+
+The current foundation is intentionally small: a native Go daemon, the
+official FalkorDB Go client, an embedded status page, a per-user graph
+configuration, and an idempotent graph bootstrap. Product state is not copied
+into SQLite or another relational database. A later replay spool may buffer
+uncommitted network payloads, but it will never answer product queries.
+
+## Why FalkorDB is essential
+
+NightShift will not create a recommendation from keyword matching alone. The
+intended decision path is:
+
+```text
+User → Project → Requirement → Technology ← Item → Source
+```
+
+That path is queried in FalkorDB and stored with the recommendation as its
+evidence. The same graph will own evolving memories, decisions, agent tasks,
+leases, tool calls, and approved actions. Removing FalkorDB removes the
+relationships that make those behaviors possible.
+
+## Current foundation
+
+- Go modular monolith; no mandatory Node.js or Python runtime.
+- FalkorDB is the only durable application state store.
+- One named control graph plus isolated named user graphs.
+- Localhost-only HTTP default.
+- External actions disabled by configuration and rejected by validation.
+- Health endpoints work even while FalkorDB is unavailable.
+- Deterministic mode is the baseline; an LLM is optional and not yet wired.
+
+The next vertical slice is public RSS/GitHub fixture ingestion → graph
+relationships → multi-hop recommendation → evidence path → feedback and
+evolving memory → graph-backed Relevance/Planner handoff.
+
+## Requirements
+
+- Go 1.24 or newer
+- FalkorDB 1.0+ reachable through its Redis-compatible endpoint
+- Docker is optional and only used for local FalkorDB development
+
+The runtime does not require Docker, Node.js, Python, SQLite, Redis, or a local
+LLM. FalkorDB itself exposes the Redis-compatible protocol; it is not being
+used as a generic Redis application database.
+
+## Quick start
+
+```bash
+cp .env.example .env
+set -a; source .env; set +a
+docker compose -f deploy/docker/compose.yaml up -d falkordb
+go mod download
+go run ./cmd/nightshift
+```
+
+In another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:8080/health/live
+curl -i http://127.0.0.1:8080/health/ready
+curl -fsS http://127.0.0.1:8080/api/v1/status
+```
+
+Open <http://127.0.0.1:8080/> to see the embedded status page. The first
+successful startup creates the `nightshift_control` graph and the configured
+demo user graph with the seed relationships from
+`migrations/falkordb/001_core.cypher`.
+
+To run only FalkorDB and use a host-built binary:
+
+```bash
+make graph-up
+make build
+./bin/nightshift
+```
+
+## Configuration
+
+Copy `.env.example` to `.env` and export it with your preferred environment
+loader. Important settings:
+
+| Variable | Purpose | Safe default |
+|---|---|---|
+| `NIGHTSHIFT_LISTEN` | HTTP bind address | `127.0.0.1:8080` |
+| `FALKORDB_URL` | `redis://`, `rediss://`, `falkor://`, or `falkors://` URL | local FalkorDB |
+| `FALKORDB_CONTROL_GRAPH` | deployment/control metadata graph | `nightshift_control` |
+| `FALKORDB_GRAPH` | user-owned graph for this installation | `nightshift_u_demo` |
+| `FALKORDB_QUERY_TIMEOUT_MS` | bounded Cypher query timeout | `5000` |
+| `NIGHTSHIFT_ACTIONS_ENABLED` | external writes | `false` |
+
+Do not put credentials in graph names, URLs returned by the API, logs, source
+fixtures, screenshots, or committed files.
+
+## Checks
+
+Run these from the repository root after installing Go:
+
+```bash
+gofmt -l .
+go test ./...
+go vet ./...
+go build -trimpath -o bin/nightshift ./cmd/nightshift
+```
+
+The FalkorDB integration check is separate from the unit suite because it
+needs a live database:
+
+```bash
+make graph-up
+go run ./cmd/nightshift
+curl -fsS http://127.0.0.1:8080/health/ready
+```
+
+## Portable deployment
+
+### Old PC, Raspberry Pi, or UNO Q
+
+Build the same daemon for Linux ARM64 or x86_64 and point it at FalkorDB Cloud
+or a private FalkorDB host:
+
+```bash
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/nightshift-linux-arm64 ./cmd/nightshift
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/nightshift-linux-amd64 ./cmd/nightshift
+```
+
+The edge process is designed to run with one worker, bounded requests, and no
+local model. FalkorDB can remain remote when the device does not have enough
+memory for the graph server.
+
+### VPS
+
+Run the binary and FalkorDB on a private network, or run the binary with a
+remote FalkorDB endpoint. The systemd unit in
+`deploy/systemd/nightshift.service` is a starting point; add a protected
+environment file and an unprivileged service account before production use.
+
+### Render
+
+`deploy/render.yaml` deploys the web daemon as a stateless service. Configure
+`FALKORDB_URL` as a Render secret pointing to FalkorDB Cloud or a private
+FalkorDB endpoint. Do not rely on the Render filesystem for durable product
+state. Multiple instances must share the same FalkorDB deployment; scheduler
+leadership and task leases will be graph-backed in the coordination slice.
+
+## Hackathon positioning
+
+Primary track: **Agent Memory and Coordination**. Secondary fit: **Agents
+That Act on Connected Data**. The demo target is:
+
+1. Ingest public or synthetic technical signals.
+2. Show the FalkorDB path connecting a signal to a project requirement.
+3. Let the user accept, reject, or defer the recommendation.
+4. Persist the decision and evolving memory in the user graph.
+5. Hand a graph-backed task from Relevance to Planner.
+6. Require approval before creating a local plan or GitHub sandbox issue.
+7. Restart the service and retrieve the same decision from FalkorDB.
+
+See `docs/hackathon.md`, `docs/architecture.md`, and `docs/graph-schema.md`.
+
+## AI coding disclosure
+
+This repository is being developed with an AI coding assistant. Team members
+must review the code, understand the graph model and Cypher, and disclose the
+assistant usage in the final submission as required by the hackathon rules.

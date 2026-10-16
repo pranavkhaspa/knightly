@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NightShift · FalkorDB-first agent</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body { max-width: 760px; margin: 4rem auto; padding: 0 1.25rem; background: #10131a; color: #edf2f7; }
+      main { border: 1px solid #303746; border-radius: 14px; padding: 2rem; background: #171c25; }
+      h1 { margin-top: 0; }
+      code { color: #8be9fd; }
+      .status { margin-top: 1.5rem; padding: 1rem; border-radius: 10px; background: #0e1117; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>NightShift</h1>
+      <p>A lightweight developer intern whose durable context lives in <strong>FalkorDB</strong>.</p>
+      <p>This foundation exposes the graph health surface. The next vertical slice adds source ingestion, graph-backed relevance, evidence paths, and evolving memory.</p>
+      <div class="status" id="status">Loading graph status…</div>
+    </main>
+    <script>
+      fetch('/api/v1/status')
+        .then(response => response.json())
+        .then(status => { document.querySelector('#status').textContent = JSON.stringify(status, null, 2); })
+        .catch(error => { document.querySelector('#status').textContent = 'Status unavailable: ' + error; });
+    </script>
+  </body>
+</html>

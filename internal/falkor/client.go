@@ -1,0 +1,193 @@
+package falkor
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	dbclient "github.com/FalkorDB/falkordb-go/v2"
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	demoUserID       = "user_demo"
+	demoProjectID    = "project_nightshift"
+	demoInterestID   = "interest_graph_agents"
+	demoRequirement  = "requirement_graph_context"
+	demoTechnologyID = "technology_falkordb"
+)
+
+// Client is the only package allowed to construct FalkorDB Cypher. Keeping
+// this boundary small makes graph dependence visible and reviewable.
+type Client struct {
+	db           *dbclient.FalkorDB
+	control      *dbclient.Graph
+	user         *dbclient.Graph
+	controlName  string
+	userName     string
+	queryTimeout int
+}
+
+type Status struct {
+	Available         bool   `json:"available"`
+	ControlGraph      string `json:"control_graph"`
+	UserGraph         string `json:"user_graph"`
+	NodeCount         int64  `json:"node_count,omitempty"`
+	RelationshipCount int64  `json:"relationship_count,omitempty"`
+	Error             string `json:"error,omitempty"`
+}
+
+func New(url, controlGraph, userGraph string, queryTimeoutMillis int) (*Client, error) {
+	optionsURL := url
+	if strings.HasPrefix(optionsURL, "falkor://") {
+		optionsURL = "redis://" + strings.TrimPrefix(optionsURL, "falkor://")
+	}
+	if strings.HasPrefix(optionsURL, "falkors://") {
+		optionsURL = "rediss://" + strings.TrimPrefix(optionsURL, "falkors://")
+	}
+	options, err := redis.ParseURL(optionsURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse FalkorDB URL: %w", err)
+	}
+	// Construct the Redis transport directly so client creation is lazy. The
+	// official FalkorDB client performs a sentinel probe during construction,
+	// which would delay /health/live whenever a remote graph is offline.
+	db := &dbclient.FalkorDB{Conn: redis.NewClient(options)}
+	return &Client{
+		db:           db,
+		control:      db.SelectGraph(controlGraph),
+		user:         db.SelectGraph(userGraph),
+		controlName:  controlGraph,
+		userName:     userGraph,
+		queryTimeout: queryTimeoutMillis,
+	}, nil
+}
+
+func (c *Client) Close() error {
+	if c == nil || c.db == nil || c.db.Conn == nil {
+		return nil
+	}
+	return c.db.Conn.Close()
+}
+
+func (c *Client) Ping(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.db.Conn.Ping(ctx).Err()
+}
+
+func (c *Client) Status(ctx context.Context) Status {
+	status := Status{
+		ControlGraph: c.controlName,
+		UserGraph:    c.userName,
+	}
+	if err := c.Ping(ctx); err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	status.Available = true
+
+	nodeResult, err := c.user.ROQuery(
+		"MATCH (n) RETURN count(n) AS nodes",
+		nil,
+		c.options(),
+	)
+	if err != nil {
+		status.Available = false
+		status.Error = err.Error()
+		return status
+	}
+	if nodeResult.Next() {
+		record := nodeResult.Record()
+		status.NodeCount = int64Value(recordValue(record, "nodes"))
+	}
+
+	relationshipResult, err := c.user.ROQuery(
+		"MATCH ()-[r]->() RETURN count(r) AS relationships",
+		nil,
+		c.options(),
+	)
+	if err != nil {
+		status.Available = false
+		status.Error = err.Error()
+		return status
+	}
+	if relationshipResult.Next() {
+		status.RelationshipCount = int64Value(recordValue(relationshipResult.Record(), "relationships"))
+	}
+	return status
+}
+
+// Initialize creates the minimum graph context needed for a meaningful demo.
+// It is idempotent and deliberately stores product state only in FalkorDB.
+func (c *Client) Initialize() error {
+	if _, err := c.control.Query(`
+		MERGE (s:Schema {id: "nightshift"})
+		SET s.version = "0.1-foundation", s.updated_at = timestamp()
+	`, nil, c.options()); err != nil {
+		return fmt.Errorf("initialize control graph: %w", err)
+	}
+
+	if _, err := c.user.Query(`
+		MERGE (u:User {id: $user_id})
+		SET u.tenant_id = $tenant_id, u.display_name = $display_name,
+		    u.updated_at = timestamp()
+		MERGE (p:Project {id: $project_id})
+		SET p.name = $project_name, p.status = "active", p.updated_at = timestamp()
+		MERGE (u)-[:OWNS]->(p)
+		MERGE (interest:Interest {id: $interest_id})
+		SET interest.name = "Graph-powered agents", interest.normalized_name = "graph agents"
+		MERGE (u)-[:INTERESTED_IN]->(interest)
+		MERGE (r:Requirement {id: $requirement_id})
+		SET r.title = "Use connected context for explainable recommendations",
+		    r.status = "open", r.priority = 1
+		MERGE (p)-[:HAS_REQUIREMENT]->(r)
+		MERGE (tech:Technology {id: $technology_id})
+		SET tech.name = "FalkorDB", tech.normalized_name = "falkordb", tech.category = "graph database"
+		MERGE (r)-[:NEEDS]->(tech)
+	`, map[string]interface{}{
+		"user_id":        demoUserID,
+		"tenant_id":      "tenant_demo",
+		"display_name":   "Demo Builder",
+		"project_id":     demoProjectID,
+		"project_name":   "NightShift",
+		"interest_id":    demoInterestID,
+		"requirement_id": demoRequirement,
+		"technology_id":  demoTechnologyID,
+	}, c.options()); err != nil {
+		return fmt.Errorf("initialize user graph: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) options() *dbclient.QueryOptions {
+	return dbclient.NewQueryOptions().SetTimeout(c.queryTimeout)
+}
+
+func recordValue(record interface {
+	Get(string) (interface{}, bool)
+}, key string) interface{} {
+	value, _ := record.Get(key)
+	return value
+}
+
+func int64Value(value interface{}) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
+// Keep the time import tied to this package's query lifecycle so callers can
+// use a bounded readiness probe without inventing an unbounded wait.
+func ReadinessContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, 2*time.Second)
+}
