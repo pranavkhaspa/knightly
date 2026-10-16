@@ -54,9 +54,9 @@ func Load() (Config, error) {
 		AuthToken:          os.Getenv("NIGHTSHIFT_AUTH_TOKEN"),
 		AuthUsername:       os.Getenv("NIGHTSHIFT_AUTH_USERNAME"),
 		AuthPassword:       os.Getenv("NIGHTSHIFT_AUTH_PASSWORD"),
-		AuthTenantID:       envOr("NIGHTSHIFT_AUTH_TENANT_ID", "tenant_demo"),
-		AuthUserID:         envOr("NIGHTSHIFT_AUTH_USER_ID", "user_demo"),
-		AuthApproverID:     envOr("NIGHTSHIFT_AUTH_APPROVER_ID", "user_demo"),
+		AuthTenantID:       envOr("NIGHTSHIFT_AUTH_TENANT_ID", envOr("NIGHTSHIFT_TENANT_ID", "tenant_demo")),
+		AuthUserID:         envOr("NIGHTSHIFT_AUTH_USER_ID", envOr("NIGHTSHIFT_USER_ID", "user_demo")),
+		AuthApproverID:     envOr("NIGHTSHIFT_AUTH_APPROVER_ID", envOr("NIGHTSHIFT_USER_ID", "user_demo")),
 	}
 
 	if value := os.Getenv("FALKORDB_QUERY_TIMEOUT_MS"); value != "" {

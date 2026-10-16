@@ -21,6 +21,7 @@ import (
 
 	"github.com/pranavkhaspa/knightly/internal/actions"
 	"github.com/pranavkhaspa/knightly/internal/agents"
+	"github.com/pranavkhaspa/knightly/internal/auth"
 	"github.com/pranavkhaspa/knightly/internal/config"
 	"github.com/pranavkhaspa/knightly/internal/falkor"
 	"github.com/pranavkhaspa/knightly/internal/identity"
@@ -131,7 +132,7 @@ func newApplication(cfg config.Config, graph *falkor.Client) (*application, erro
 		projects:       project.NewService(falkor.NewProjectRepository(selector)),
 		requirements:   requirement.NewService(falkor.NewRequirementRepository(selector)),
 		sessions:       session.NewService(falkor.NewSessionDecisionRepository(selector)),
-		sources:        falkor.NewSourceRepository(graph),
+		sources:        falkor.NewSourceRepository(graph, scope),
 		initialization: stateStarting,
 	}
 	app.adapters = ingestion.NewHTTPAdapterRegistry(&http.Client{Timeout: 15 * time.Second}, 2<<20, "NightShift/0.1")
@@ -152,6 +153,9 @@ func newApplication(cfg config.Config, graph *falkor.Client) (*application, erro
 		return nil, fmt.Errorf("construct collector: %w", err)
 	}
 	app.collector = collector
+	app.collector.Coordinator = graph
+	app.collector.LeaseOwner = cfg.InstanceID
+	app.collector.LeaseLifetime = 10 * time.Minute
 	app.schedule, err = scheduler.New(scheduler.Config{}, collectionRunner{app: app})
 	if err != nil {
 		return nil, fmt.Errorf("construct scheduler: %w", err)
@@ -224,9 +228,18 @@ func main() {
 		log.Fatalf("application construction error: %v", err)
 	}
 
+	policy, err := auth.New(auth.Config{
+		Token: cfg.AuthToken, Username: cfg.AuthUsername, Password: cfg.AuthPassword,
+		Scope:      identity.Scope{TenantID: cfg.TenantID, UserID: cfg.UserID},
+		ApproverID: cfg.AuthApproverID, RequireAuthentication: cfg.AuthRequired,
+		PublicPaths: []string{"/health/live"},
+	})
+	if err != nil {
+		log.Fatalf("authentication configuration error: %v", err)
+	}
 	server := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           app.routes(),
+		Handler:           policy.Wrap(app.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -359,6 +372,25 @@ func (a *application) ensureSetup(ctx context.Context) error {
 			TenantID:    a.scope.TenantID,
 			UserID:      a.scope.UserID,
 			DisplayName: "NightShift user",
+		}); saveErr != nil {
+			return saveErr
+		}
+	}
+	if _, err := a.projects.Get(ctx, a.scope, a.config.ProjectID); err != nil {
+		if !errors.Is(err, project.ErrProjectNotFound) {
+			return err
+		}
+		if _, saveErr := a.projects.Save(ctx, project.Project{
+			ID: a.config.ProjectID, TenantID: a.scope.TenantID, UserID: a.scope.UserID,
+			Name: "NightShift", Description: "Graph-backed developer context", Status: project.Active,
+			Technologies: []string{"FalkorDB"}, DesiredOutcomes: []string{"Explainable graph-backed recommendations"},
+		}); saveErr != nil {
+			return saveErr
+		}
+		if _, saveErr := a.requirements.Save(ctx, requirement.Requirement{
+			ID: "requirement_graph_context", TenantID: a.scope.TenantID, UserID: a.scope.UserID,
+			ProjectID: a.config.ProjectID, Title: "Use connected context for explainable recommendations",
+			Status: requirement.Open, Priority: 1, TechnologyIDs: []string{"technology_falkordb"},
 		}); saveErr != nil {
 			return saveErr
 		}
@@ -1140,8 +1172,7 @@ func (a *application) memories(w http.ResponseWriter, request *http.Request) {
 }
 
 type approvalRequest struct {
-	ApprovedBy string `json:"approved_by"`
-	Note       string `json:"note,omitempty"`
+	Note string `json:"note,omitempty"`
 }
 
 func (a *application) approveAction(w http.ResponseWriter, request *http.Request) {
@@ -1149,8 +1180,13 @@ func (a *application) approveAction(w http.ResponseWriter, request *http.Request
 	if err := decodeJSON(w, request, &body); err != nil {
 		return
 	}
+	approver, err := auth.ApproverFromRequest(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "APPROVAL_IDENTITY_REQUIRED", err, false)
+		return
+	}
 	approved, err := a.actions.Approve(request.Context(), a.scope.UserID, request.PathValue("id"), actions.Approval{
-		ID: requestIdentifier(request), ApprovedBy: body.ApprovedBy, Note: body.Note,
+		ID: requestIdentifier(request), ApprovedBy: approver, Note: body.Note,
 	})
 	if err != nil {
 		writeError(w, http.StatusConflict, "APPROVAL_FAILED", err, false)

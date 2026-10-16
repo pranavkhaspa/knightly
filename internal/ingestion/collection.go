@@ -163,7 +163,6 @@ func (c *Collector) Collect(ctx context.Context, options CollectOptions) (Collec
 		}
 
 		run, items, runErr := c.collectSource(ctx, source, cursor)
-		summary.Runs = append(summary.Runs, run)
 		c.appendItems(&summary, items)
 		if runErr != nil {
 			if errors.Is(runErr, coordination.ErrLeaseUnavailable) {
@@ -185,7 +184,7 @@ func (c *Collector) Collect(ctx context.Context, options CollectOptions) (Collec
 	return summary, nil
 }
 
-func (c *Collector) collectSource(ctx context.Context, source SourceConfig, cursor SourceCursor) (SourceRun, []Item, error) {
+func (c *Collector) collectSource(ctx context.Context, source SourceConfig, cursor SourceCursor) (run SourceRun, items []Item, err error) {
 	startedAt := c.now()
 	run = SourceRun{
 		ID:        StableID("source_run", fmt.Sprintf("%s\x00%s\x00%d", source.ID, startedAt.Format(time.RFC3339Nano), atomic.AddUint64(&c.sequence, 1))),
@@ -197,7 +196,7 @@ func (c *Collector) collectSource(ctx context.Context, source SourceConfig, curs
 	}
 	releaseLease, leaseErr := c.acquireSourceLease(ctx, source, run)
 	if leaseErr != nil {
-		return run, leaseErr
+		return run, nil, leaseErr
 	}
 	if releaseLease != nil {
 		defer func() {
