@@ -109,6 +109,7 @@ type Recommendation struct {
 	Title          string       `json:"title"`
 	Summary        string       `json:"summary"`
 	Why            string       `json:"why"`
+	PathReadable   string       `json:"path_readable,omitempty"`
 	Score          float64      `json:"score"`
 	RankingVersion string       `json:"ranking_version"`
 	QueryName      string       `json:"query_name"`

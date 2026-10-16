@@ -34,6 +34,12 @@ raw email address, display name, token, or user-provided string in a graph
 name. Every user-owned node also carries `tenant_id` or `user_id` for
 defense-in-depth query filtering.
 
+`internal/falkor.UserGraphName` implements the stable hashed naming rule. The
+single-user installation currently accepts `FALKORDB_GRAPH` explicitly, while
+the control graph records the demo user's graph mapping. A multi-user host can
+instantiate one graph client per mapped graph without changing the domain
+repositories or allowing a request to choose an arbitrary graph name.
+
 ## Critical path invariant
 
 No recommendation is valid without a qualifying FalkorDB path. The first
@@ -52,7 +58,7 @@ the graph instead of asking a model to invent an explanation after the fact.
 ## MCP boundary
 
 MCP is a narrow, typed tool surface over application services. It is not an
-arbitrary Cypher endpoint. Planned tools:
+arbitrary Cypher endpoint. The current tools are:
 
 - `context.search_relevant_items`
 - `context.explain_recommendation`
@@ -63,6 +69,11 @@ arbitrary Cypher endpoint. Planned tools:
 Every invocation becomes a `ToolCall` node linked to a task and session. The
 model cannot choose a graph name, execute arbitrary Cypher, run shell commands,
 fetch arbitrary URLs, access credentials, or perform a direct external write.
+
+The HTTP bridge exposes the same allowlisted surface at `GET /api/v1/mcp/tools`
+and `POST /api/v1/mcp`. The bridge derives tenant and user scope from the
+installation rather than trusting tool input. A request selects one of the
+five typed tool names and supplies only that tool's JSON input.
 
 ## Evolving memory
 

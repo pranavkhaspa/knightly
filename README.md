@@ -98,10 +98,39 @@ loader. Important settings:
 | `FALKORDB_CONTROL_GRAPH` | deployment/control metadata graph | `nightshift_control` |
 | `FALKORDB_GRAPH` | user-owned graph for this installation | `nightshift_u_demo` |
 | `FALKORDB_QUERY_TIMEOUT_MS` | bounded Cypher query timeout | `5000` |
-| `NIGHTSHIFT_ACTIONS_ENABLED` | external writes | `false` |
+| `NIGHTSHIFT_DATA_DIR` | local approved-plan artifact directory | `./data` |
+| `NIGHTSHIFT_ACTIONS_ENABLED` | approval-gated local plan execution | `false` |
 
 Do not put credentials in graph names, URLs returned by the API, logs, source
-fixtures, screenshots, or committed files.
+fixtures, screenshots, or committed files. The only local artifact written by
+the current action executor is an explicitly approved Markdown plan; its
+action state and idempotency record remain in FalkorDB.
+
+## Demo flow
+
+With FalkorDB running and the daemon started, trigger the deterministic public
+fixture flow:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8080/api/v1/runs
+curl -fsS http://127.0.0.1:8080/api/v1/recommendations
+```
+
+Take the returned recommendation ID and inspect the graph evidence, record
+feedback, and create a persisted planner proposal:
+
+```bash
+curl -fsS http://127.0.0.1:8080/api/v1/graph/path/<recommendation-id>
+curl -fsS -X POST http://127.0.0.1:8080/api/v1/recommendations/<recommendation-id>/feedback \
+  -H 'Content-Type: application/json' -d '{"kind":"useful","note":"Connected to the active project."}'
+curl -fsS -X POST http://127.0.0.1:8080/api/v1/recommendations/<recommendation-id>/plan \
+  -H 'Content-Type: application/json' -d '{"goal":"Prepare the smallest implementation task."}'
+```
+
+The plan action is `proposed` until the user explicitly approves it. To enable
+the local Markdown executor for a controlled demo, set
+`NIGHTSHIFT_ACTIONS_ENABLED=true`, then call the approval and execute routes.
+GitHub writes are not exposed by the current MVP.
 
 ## Checks
 

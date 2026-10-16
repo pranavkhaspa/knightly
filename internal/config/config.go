@@ -15,6 +15,7 @@ type Config struct {
 	FalkorURL          string
 	ControlGraph       string
 	UserGraph          string
+	DataDir            string
 	QueryTimeoutMillis int
 	ActionsEnabled     bool
 }
@@ -27,6 +28,7 @@ func Load() (Config, error) {
 		FalkorURL:          envOr("FALKORDB_URL", "redis://127.0.0.1:6379"),
 		ControlGraph:       envOr("FALKORDB_CONTROL_GRAPH", "nightshift_control"),
 		UserGraph:          envOr("FALKORDB_GRAPH", "nightshift_u_demo"),
+		DataDir:            envOr("NIGHTSHIFT_DATA_DIR", "./data"),
 		QueryTimeoutMillis: 5000,
 	}
 
@@ -46,10 +48,7 @@ func Load() (Config, error) {
 		c.ActionsEnabled = parsed
 	}
 
-	if c.ActionsEnabled {
-		return Config{}, fmt.Errorf("external actions are not available in the foundation and must remain disabled")
-	}
-	if c.Listen == "" || c.FalkorURL == "" || c.ControlGraph == "" || c.UserGraph == "" {
+	if c.Listen == "" || c.FalkorURL == "" || c.ControlGraph == "" || c.UserGraph == "" || c.DataDir == "" {
 		return Config{}, fmt.Errorf("listen, FalkorDB URL, and graph names must be non-empty")
 	}
 

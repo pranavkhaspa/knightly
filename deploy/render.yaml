@@ -11,6 +11,8 @@ services:
         value: 0.0.0.0:8080
       - key: NIGHTSHIFT_ENV
         value: render
+      - key: NIGHTSHIFT_DATA_DIR
+        value: /tmp/nightshift
       - key: FALKORDB_URL
         sync: false
       - key: FALKORDB_CONTROL_GRAPH

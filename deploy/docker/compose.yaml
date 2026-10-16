@@ -18,6 +18,8 @@ services:
     environment:
       NIGHTSHIFT_LISTEN: 0.0.0.0:8080
       NIGHTSHIFT_ENV: development
+      NIGHTSHIFT_INSTANCE_ID: compose-edge
+      NIGHTSHIFT_DATA_DIR: /var/lib/nightshift
       FALKORDB_URL: redis://falkordb:6379
       FALKORDB_CONTROL_GRAPH: nightshift_control
       FALKORDB_GRAPH: nightshift_u_demo
@@ -25,6 +27,9 @@ services:
       NIGHTSHIFT_ACTIONS_ENABLED: "false"
     ports:
       - "8080:8080"
+    volumes:
+      - nightshift-data:/var/lib/nightshift
 
 volumes:
   falkordb-data:
+  nightshift-data:

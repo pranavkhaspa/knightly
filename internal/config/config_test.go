@@ -11,6 +11,7 @@ func TestLoadDefaultsToSafeLocalConfiguration(t *testing.T) {
 		"FALKORDB_URL",
 		"FALKORDB_CONTROL_GRAPH",
 		"FALKORDB_GRAPH",
+		"NIGHTSHIFT_DATA_DIR",
 		"FALKORDB_QUERY_TIMEOUT_MS",
 		"NIGHTSHIFT_ACTIONS_ENABLED",
 	} {
@@ -30,6 +31,9 @@ func TestLoadDefaultsToSafeLocalConfiguration(t *testing.T) {
 	if c.InstanceID == "" {
 		t.Fatal("instance ID must have a non-empty fallback")
 	}
+	if c.DataDir != "./data" {
+		t.Fatalf("unexpected data directory: %q", c.DataDir)
+	}
 }
 
 func TestLoadUsesExplicitInstanceID(t *testing.T) {
@@ -43,9 +47,9 @@ func TestLoadUsesExplicitInstanceID(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsEnabledActionsInFoundation(t *testing.T) {
+func TestLoadAllowsExplicitlyEnabledActionsForApprovalWorkflow(t *testing.T) {
 	t.Setenv("NIGHTSHIFT_ACTIONS_ENABLED", "true")
-	if _, err := Load(); err == nil {
-		t.Fatal("Load() accepted unsupported external actions")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() rejected approval-gated action mode: %v", err)
 	}
 }

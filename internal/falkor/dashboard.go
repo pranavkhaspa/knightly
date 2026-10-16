@@ -129,14 +129,3 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 	}
 	return dashboard, nil
 }
-
-func stringValue(value interface{}) string {
-	switch typed := value.(type) {
-	case string:
-		return typed
-	case []byte:
-		return string(typed)
-	default:
-		return ""
-	}
-}

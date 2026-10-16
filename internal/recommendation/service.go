@@ -94,6 +94,7 @@ func (s *Service) Recommend(ctx context.Context, userID, projectID string, candi
 			Title:          candidate.Title,
 			Summary:        candidate.Summary,
 			Why:            "Graph path: " + path.Readable(),
+			PathReadable:   path.Readable(),
 			Score:          candidate.Score,
 			RankingVersion: rankingVersion,
 			QueryName:      QueryName,

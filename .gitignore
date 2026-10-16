@@ -6,6 +6,8 @@
 /dist/
 /nightshift
 /nightshift-*
+/data/
+.worktrees/
 
 *.log
 *.tmp

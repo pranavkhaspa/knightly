@@ -195,16 +195,3 @@ func parsePathNodes(value interface{}) ([]recommendation.PathNode, error) {
 	}
 	return nodes, nil
 }
-
-func stringValue(value interface{}) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	case []byte:
-		return string(typed)
-	default:
-		return fmt.Sprint(typed)
-	}
-}

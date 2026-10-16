@@ -38,6 +38,8 @@ Recommendation -[:FOR]-> User
 Recommendation -[:ABOUT]-> Item
 Recommendation -[:MATCHES]-> Requirement
 Recommendation -[:SUPPORTED_BY]-> Evidence
+Recommendation -[:SUGGESTS]-> Action
+Action -[:BASED_ON]-> Recommendation
 Session -[:CONTAINS]-> Memory
 Memory -[:SUPERSEDES]-> Memory
 Memory -[:DERIVED_FROM]-> Evidence

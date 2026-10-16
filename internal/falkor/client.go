@@ -126,7 +126,9 @@ func (c *Client) Initialize() error {
 	if _, err := c.control.Query(`
 		MERGE (s:Schema {id: "nightshift"})
 		SET s.version = "0.1-foundation", s.updated_at = timestamp()
-	`, nil, c.options()); err != nil {
+		MERGE (mapping:UserGraph {user_id: $user_id})
+		SET mapping.graph_name = $graph_name, mapping.updated_at = timestamp()
+	`, map[string]interface{}{"user_id": demoUserID, "graph_name": c.userName}, c.options()); err != nil {
 		return fmt.Errorf("initialize control graph: %w", err)
 	}
 
