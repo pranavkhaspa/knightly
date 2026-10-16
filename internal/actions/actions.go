@@ -113,6 +113,12 @@ type Repository interface {
 	ClaimForExecution(context.Context, string, string) (Action, error)
 }
 
+// StaleRecoveryRepository is optional so existing in-memory repositories can
+// remain small while graph-backed deployments can recover abandoned execution.
+type StaleRecoveryRepository interface {
+	RecoverStaleExecuting(context.Context, string, string, time.Time) (int, error)
+}
+
 type Service struct {
 	repository            Repository
 	externalWritesEnabled bool
@@ -260,9 +266,23 @@ func (s *Service) Execute(ctx context.Context, userID, actionID string, executor
 	return cloneAction(claimed), nil
 }
 
+func (s *Service) RecoverStaleExecuting(ctx context.Context, tenantID, userID string, before time.Time) (int, error) {
+	if s == nil || s.repository == nil {
+		return 0, fmt.Errorf("%w: repository is required", ErrInvalidAction)
+	}
+	recovery, ok := s.repository.(StaleRecoveryRepository)
+	if !ok {
+		return 0, fmt.Errorf("%w: stale execution recovery is not supported", ErrInvalidAction)
+	}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" || before.IsZero() {
+		return 0, fmt.Errorf("%w: tenant, user, and stale cutoff are required", ErrInvalidAction)
+	}
+	return recovery.RecoverStaleExecuting(ctx, tenantID, userID, before)
+}
+
 func validateAction(action Action) error {
-	if strings.TrimSpace(action.ID) == "" || strings.TrimSpace(action.UserID) == "" {
-		return fmt.Errorf("%w: ID and user ID are required", ErrInvalidAction)
+	if strings.TrimSpace(action.ID) == "" || strings.TrimSpace(action.TenantID) == "" || strings.TrimSpace(action.UserID) == "" {
+		return fmt.Errorf("%w: ID, tenant ID, and user ID are required", ErrInvalidAction)
 	}
 	if !action.Kind.Valid() {
 		return fmt.Errorf("%w: unknown action kind %q", ErrInvalidAction, action.Kind)

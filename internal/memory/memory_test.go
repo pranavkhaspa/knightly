@@ -99,11 +99,11 @@ func TestEvolvePersistsTypedMemoryAndHistory(t *testing.T) {
 func TestEvolveRejectsTypeChange(t *testing.T) {
 	repository := newFakeRepository()
 	service := NewService(repository)
-	_, err := service.Remember(context.Background(), Memory{ID: "m1", UserID: "u1", Type: Episodic, Content: "a"})
+	_, err := service.Remember(context.Background(), Memory{ID: "m1", TenantID: "t1", UserID: "u1", Type: Episodic, Content: "a"})
 	if err != nil {
 		t.Fatalf("remember: %v", err)
 	}
-	_, err = service.Evolve(context.Background(), "m1", Memory{ID: "m2", UserID: "u1", Type: Procedural, Content: "b"})
+	_, err = service.Evolve(context.Background(), "m1", Memory{ID: "m2", TenantID: "t1", UserID: "u1", Type: Procedural, Content: "b"})
 	if !errors.Is(err, ErrInvalidSupersession) {
 		t.Fatalf("evolve error = %v, want ErrInvalidSupersession", err)
 	}
@@ -112,10 +112,10 @@ func TestEvolveRejectsTypeChange(t *testing.T) {
 func TestRetrieveAppliesByteBoundAfterRepositoryResult(t *testing.T) {
 	repository := newFakeRepository()
 	service := NewService(repository)
-	_, _ = service.Remember(context.Background(), Memory{ID: "m1", UserID: "u1", Type: Episodic, Content: "12345"})
-	_, _ = service.Remember(context.Background(), Memory{ID: "m2", UserID: "u1", Type: Episodic, Content: "67890"})
+	_, _ = service.Remember(context.Background(), Memory{ID: "m1", TenantID: "t1", UserID: "u1", Type: Episodic, Content: "12345"})
+	_, _ = service.Remember(context.Background(), Memory{ID: "m2", TenantID: "t1", UserID: "u1", Type: Episodic, Content: "67890"})
 
-	items, err := service.Retrieve(context.Background(), RetrievalQuery{UserID: "u1", Limit: 10, MaxBytes: 5})
+	items, err := service.Retrieve(context.Background(), RetrievalQuery{TenantID: "t1", UserID: "u1", Limit: 10, MaxBytes: 5})
 	if err != nil {
 		t.Fatalf("retrieve: %v", err)
 	}

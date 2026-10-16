@@ -124,32 +124,33 @@ func (c *Client) Status(ctx context.Context) Status {
 // Initialize creates the minimum graph context needed for a meaningful demo.
 // It is idempotent and deliberately stores product state only in FalkorDB.
 func (c *Client) Initialize() error {
+	updatedAt := time.Now().UTC().UnixMilli()
 	if _, err := c.control.Query(`
 		MERGE (s:Schema {id: "nightshift"})
-		SET s.version = "0.1-foundation", s.updated_at = timestamp()
+		SET s.version = "0.1-foundation", s.updated_at = $updated_at
 		MERGE (mapping:UserGraph {tenant_id: $tenant_id, user_id: $user_id})
-		SET mapping.graph_name = $graph_name, mapping.updated_at = timestamp()
-	`, map[string]interface{}{"tenant_id": "tenant_demo", "user_id": demoUserID, "graph_name": c.userName}, c.options()); err != nil {
+		SET mapping.graph_name = $graph_name, mapping.updated_at = $updated_at
+	`, map[string]interface{}{"tenant_id": "tenant_demo", "user_id": demoUserID, "graph_name": c.userName, "updated_at": updatedAt}, c.options()); err != nil {
 		return fmt.Errorf("initialize control graph: %w", err)
 	}
 
 	if _, err := c.user.Query(`
-		MERGE (u:User {id: $user_id})
+		MERGE (u:User {id: $user_id, tenant_id: $tenant_id})
 		SET u.tenant_id = $tenant_id, u.display_name = $display_name,
-		    u.updated_at = timestamp()
-		MERGE (p:Project {id: $project_id})
+		    u.updated_at = $updated_at
+		MERGE (p:Project {id: $project_id, tenant_id: $tenant_id, user_id: $user_id})
 		SET p.tenant_id = $tenant_id, p.user_id = $user_id,
-		    p.name = $project_name, p.status = "active", p.updated_at = timestamp()
+		    p.name = $project_name, p.status = "active", p.updated_at = $updated_at
 		MERGE (u)-[:OWNS]->(p)
-		MERGE (interest:Interest {id: $interest_id})
+		MERGE (interest:Interest {id: $interest_id, tenant_id: $tenant_id, user_id: $user_id})
 		SET interest.name = "Graph-powered agents", interest.normalized_name = "graph agents"
 		MERGE (u)-[:INTERESTED_IN]->(interest)
-		MERGE (r:Requirement {id: $requirement_id})
+		MERGE (r:Requirement {id: $requirement_id, tenant_id: $tenant_id, user_id: $user_id})
 		SET r.tenant_id = $tenant_id, r.user_id = $user_id,
 		    r.title = "Use connected context for explainable recommendations",
 		    r.status = "open", r.priority = 1
 		MERGE (p)-[:HAS_REQUIREMENT]->(r)
-		MERGE (tech:Technology {id: $technology_id})
+		MERGE (tech:Technology {id: $technology_id, tenant_id: $tenant_id, user_id: $user_id})
 		SET tech.tenant_id = $tenant_id, tech.user_id = $user_id,
 		    tech.name = "FalkorDB", tech.normalized_name = "falkordb", tech.category = "graph database"
 		MERGE (r)-[:NEEDS]->(tech)
@@ -162,6 +163,7 @@ func (c *Client) Initialize() error {
 		"interest_id":    demoInterestID,
 		"requirement_id": demoRequirement,
 		"technology_id":  demoTechnologyID,
+		"updated_at":     updatedAt,
 	}, c.options()); err != nil {
 		return fmt.Errorf("initialize user graph: %w", err)
 	}

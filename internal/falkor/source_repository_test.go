@@ -16,6 +16,8 @@ func (r sourceRecord) Get(key string) (interface{}, bool) {
 func TestSourceRecordMappingKeepsDurableCollectionConfiguration(t *testing.T) {
 	source, err := sourceFromRecord(sourceRecord{
 		"id":                    "source_feed",
+		"tenant_id":             "tenant-a",
+		"user_id":               "user-a",
 		"name":                  "Example feed",
 		"kind":                  "rss",
 		"url":                   "https://example.com/feed",
@@ -29,7 +31,7 @@ func TestSourceRecordMappingKeepsDurableCollectionConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.ID != "source_feed" || source.Kind != "rss" || source.PollInterval != 15*time.Minute || source.MaxItems != 25 {
+	if source.ID != "source_feed" || source.TenantID != "tenant-a" || source.UserID != "user-a" || source.Kind != "rss" || source.PollInterval != 15*time.Minute || source.MaxItems != 25 {
 		t.Fatalf("source = %+v", source)
 	}
 	if len(source.TechnologyHints) != 2 || source.TechnologyHints[1] != "FalkorDB" || len(source.InterestHints) != 1 {
@@ -48,7 +50,7 @@ func TestSourceRepositoryQueriesKeepSourceStateInFalkorDB(t *testing.T) {
 			t.Errorf("%s query does not mention Source state", name)
 		}
 	}
-	for _, fragment := range []string{"HAS_CURSOR", "HAS_RUN", "last_success_at", "poll_interval_seconds", "max_items"} {
+	for _, fragment := range []string{"HAS_CURSOR", "HAS_RUN", "last_success_at", "poll_interval_seconds", "max_items", "tenant_id", "user_id"} {
 		combined := SourceListQuery + SourceCursorQuery + SourceCursorSaveQuery + SourceRunBeginQuery + SourceRunCompleteQuery
 		if !strings.Contains(combined, fragment) {
 			t.Errorf("source repository queries missing %q", fragment)

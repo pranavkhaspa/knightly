@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/pranavkhaspa/knightly/internal/identity"
 	"github.com/pranavkhaspa/knightly/internal/ingestion"
 )
 
 const (
 	SourceListQuery = `
-MATCH (source:Source)
-RETURN source.id AS id, source.name AS name, source.kind AS kind,
+MATCH (source:Source {tenant_id: $tenant_id, user_id: $user_id})
+RETURN source.id AS id, source.tenant_id AS tenant_id, source.user_id AS user_id,
+       source.name AS name, source.kind AS kind,
        source.url AS url, source.enabled AS enabled,
        source.trust_score AS trust_score,
        source.poll_interval_seconds AS poll_interval_seconds,
@@ -24,8 +27,10 @@ LIMIT 1000
 `
 
 	SourceCursorQuery = `
-MATCH (source:Source {id: $source_id})-[:HAS_CURSOR]->(cursor:SourceCursor {source_id: $source_id})
-RETURN cursor.source_id AS source_id, cursor.etag AS etag,
+MATCH (source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
+      -[:HAS_CURSOR]->(cursor:SourceCursor {source_id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
+RETURN cursor.source_id AS source_id, cursor.tenant_id AS tenant_id,
+       cursor.user_id AS user_id, cursor.etag AS etag,
        cursor.last_modified AS last_modified,
        cursor.last_attempt_at AS last_attempt_at,
        cursor.last_success_at AS last_success_at,
@@ -34,8 +39,8 @@ LIMIT 1
 `
 
 	SourceCursorSaveQuery = `
-MATCH (source:Source {id: $source_id})
-MERGE (cursor:SourceCursor {source_id: $source_id})
+MATCH (source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
+MERGE (cursor:SourceCursor {source_id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
 SET cursor.etag = $etag,
     cursor.last_modified = $last_modified,
     cursor.last_attempt_at = $last_attempt_at,
@@ -47,8 +52,8 @@ RETURN cursor.source_id AS source_id
 `
 
 	SourceRunBeginQuery = `
-MATCH (source:Source {id: $source_id})
-MERGE (run:SourceRun {id: $run_id, source_id: $source_id})
+MATCH (source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
+MERGE (run:SourceRun {id: $run_id, source_id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
 ON CREATE SET run.created_at = $started_at
 SET run.status = $status,
     run.started_at = $started_at,
@@ -64,7 +69,7 @@ RETURN run.id AS id
 `
 
 	SourceRunCompleteQuery = `
-MATCH (run:SourceRun {id: $run_id, source_id: $source_id})
+MATCH (run:SourceRun {id: $run_id, source_id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
 SET run.status = $status,
     run.finished_at = $finished_at,
     run.error = $error,
@@ -85,16 +90,25 @@ DETACH DELETE source, state
 
 type SourceRepository struct {
 	client *Client
+	scope  identity.Scope
 }
 
 var _ ingestion.SourceRepository = (*SourceRepository)(nil)
 
-func NewSourceRepository(client *Client) *SourceRepository {
-	return &SourceRepository{client: client}
+func NewSourceRepository(client *Client, scopes ...identity.Scope) *SourceRepository {
+	repository := &SourceRepository{client: client}
+	if len(scopes) > 0 {
+		repository.scope = scopes[0]
+	}
+	return repository
 }
 
 func (r *SourceRepository) UpsertSource(ctx context.Context, source ingestion.SourceConfig) error {
 	if err := r.ready(ctx); err != nil {
+		return err
+	}
+	var err error
+	if source, err = r.applyScope(source); err != nil {
 		return err
 	}
 	return r.client.UpsertSource(ctx, source)
@@ -104,6 +118,17 @@ func (r *SourceRepository) UpsertItem(ctx context.Context, item ingestion.Item) 
 	if err := r.ready(ctx); err != nil {
 		return err
 	}
+	if r.scope.TenantID != "" || r.scope.UserID != "" {
+		if item.TenantID == "" {
+			item.TenantID = r.scope.TenantID
+		}
+		if item.UserID == "" {
+			item.UserID = r.scope.UserID
+		}
+		if item.TenantID != r.scope.TenantID || item.UserID != r.scope.UserID {
+			return errors.New("item is outside the source repository scope")
+		}
+	}
 	return r.client.UpsertItem(ctx, item)
 }
 
@@ -111,7 +136,13 @@ func (r *SourceRepository) ListSources(ctx context.Context) ([]ingestion.SourceC
 	if err := r.ready(ctx); err != nil {
 		return nil, err
 	}
-	result, err := r.client.user.ROQuery(SourceListQuery, nil, r.client.options())
+	if err := r.scope.Validate(); err != nil {
+		return nil, fmt.Errorf("source repository scope: %w", err)
+	}
+	result, err := r.client.user.ROQuery(SourceListQuery, map[string]interface{}{
+		"tenant_id": r.scope.TenantID,
+		"user_id":   r.scope.UserID,
+	}, r.client.options())
 	if err != nil {
 		return nil, fmt.Errorf("list sources from graph: %w", err)
 	}
@@ -149,12 +180,19 @@ func (r *SourceRepository) GetSourceCursor(ctx context.Context, sourceID string)
 	if sourceID == "" {
 		return ingestion.SourceCursor{}, false, errors.New("source ID is required")
 	}
-	result, err := r.client.user.ROQuery(SourceCursorQuery, map[string]interface{}{"source_id": sourceID}, r.client.options())
+	if err := r.scope.Validate(); err != nil {
+		return ingestion.SourceCursor{}, false, fmt.Errorf("source repository scope: %w", err)
+	}
+	result, err := r.client.user.ROQuery(SourceCursorQuery, map[string]interface{}{
+		"source_id": sourceID,
+		"tenant_id": r.scope.TenantID,
+		"user_id":   r.scope.UserID,
+	}, r.client.options())
 	if err != nil {
 		return ingestion.SourceCursor{}, false, fmt.Errorf("get source cursor from graph: %w", err)
 	}
 	if !result.Next() {
-		return ingestion.SourceCursor{SourceID: sourceID}, false, nil
+		return ingestion.SourceCursor{SourceID: sourceID, TenantID: r.scope.TenantID, UserID: r.scope.UserID}, false, nil
 	}
 	cursor, _, parseErr := cursorFromRecord(result.Record())
 	return cursor, true, parseErr
@@ -167,8 +205,22 @@ func (r *SourceRepository) SaveSourceCursor(ctx context.Context, cursor ingestio
 	if cursor.SourceID == "" {
 		return errors.New("source ID is required")
 	}
+	if err := r.scope.Validate(); err != nil {
+		return fmt.Errorf("source repository scope: %w", err)
+	}
+	if cursor.TenantID == "" {
+		cursor.TenantID = r.scope.TenantID
+	}
+	if cursor.UserID == "" {
+		cursor.UserID = r.scope.UserID
+	}
+	if cursor.TenantID != r.scope.TenantID || cursor.UserID != r.scope.UserID {
+		return errors.New("source cursor is outside the source repository scope")
+	}
 	result, err := r.client.user.Query(SourceCursorSaveQuery, map[string]interface{}{
 		"source_id":       cursor.SourceID,
+		"tenant_id":       cursor.TenantID,
+		"user_id":         cursor.UserID,
 		"etag":            cursor.ETag,
 		"last_modified":   cursor.LastModified,
 		"last_attempt_at": optionalMillis(cursor.LastAttemptAt),
@@ -189,9 +241,23 @@ func (r *SourceRepository) BeginSourceRun(ctx context.Context, run ingestion.Sou
 	if run.ID == "" || run.SourceID == "" {
 		return errors.New("source run ID and source ID are required")
 	}
+	if err := r.scope.Validate(); err != nil {
+		return fmt.Errorf("source repository scope: %w", err)
+	}
+	if run.TenantID == "" {
+		run.TenantID = r.scope.TenantID
+	}
+	if run.UserID == "" {
+		run.UserID = r.scope.UserID
+	}
+	if run.TenantID != r.scope.TenantID || run.UserID != r.scope.UserID {
+		return errors.New("source run is outside the source repository scope")
+	}
 	result, err := r.client.user.Query(SourceRunBeginQuery, map[string]interface{}{
 		"run_id":     run.ID,
 		"source_id":  run.SourceID,
+		"tenant_id":  run.TenantID,
+		"user_id":    run.UserID,
 		"status":     string(ingestion.SourceRunRunning),
 		"started_at": optionalMillis(run.StartedAt),
 	}, r.client.options())
@@ -208,9 +274,23 @@ func (r *SourceRepository) CompleteSourceRun(ctx context.Context, run ingestion.
 	if run.ID == "" || run.SourceID == "" {
 		return errors.New("source run ID and source ID are required")
 	}
+	if err := r.scope.Validate(); err != nil {
+		return fmt.Errorf("source repository scope: %w", err)
+	}
+	if run.TenantID == "" {
+		run.TenantID = r.scope.TenantID
+	}
+	if run.UserID == "" {
+		run.UserID = r.scope.UserID
+	}
+	if run.TenantID != r.scope.TenantID || run.UserID != r.scope.UserID {
+		return errors.New("source run is outside the source repository scope")
+	}
 	result, err := r.client.user.Query(SourceRunCompleteQuery, map[string]interface{}{
 		"run_id":           run.ID,
 		"source_id":        run.SourceID,
+		"tenant_id":        run.TenantID,
+		"user_id":          run.UserID,
 		"status":           string(run.Status),
 		"finished_at":      optionalMillis(run.FinishedAt),
 		"error":            run.Error,
@@ -223,6 +303,38 @@ func (r *SourceRepository) CompleteSourceRun(ctx context.Context, run ingestion.
 		return fmt.Errorf("complete source run in graph: %w", err)
 	}
 	return requireQueryRow(result, "complete source run")
+}
+
+// RecoverStaleRuns closes source runs left in running state by a crashed
+// collector. A recovered run is failed rather than replayed automatically;
+// the next normal due check can safely start a fresh run.
+func (r *SourceRepository) RecoverStaleRuns(ctx context.Context, tenantID, userID string, before time.Time) (int, error) {
+	if err := r.ready(ctx); err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" || before.IsZero() {
+		return 0, errors.New("tenant, user, and stale cutoff are required")
+	}
+	result, err := r.client.user.Query(`
+		MATCH (run:SourceRun {tenant_id: $tenant_id, user_id: $user_id, status: "running"})
+		WHERE coalesce(run.started_at, run.updated_at, 0) < $cutoff
+		SET run.status = $status, run.error = "recovered stale source run",
+		    run.finished_at = $recovered_at, run.updated_at = $recovered_at
+		RETURN count(run) AS recovered
+	`, map[string]interface{}{
+		"tenant_id":    tenantID,
+		"user_id":      userID,
+		"status":       string(ingestion.SourceRunFailed),
+		"cutoff":       before.UTC().UnixMilli(),
+		"recovered_at": time.Now().UTC().UnixMilli(),
+	}, r.client.options())
+	if err != nil {
+		return 0, fmt.Errorf("recover stale source runs: %w", err)
+	}
+	if !result.Next() {
+		return 0, nil
+	}
+	return int(recordInt64(recordValue(result.Record(), "recovered"))), nil
 }
 
 func (r *SourceRepository) ready(ctx context.Context) error {
@@ -238,6 +350,8 @@ func (r *SourceRepository) ready(ctx context.Context) error {
 func sourceFromRecord(record recordReader) (ingestion.SourceConfig, error) {
 	return ingestion.SourceConfig{
 		ID:              stringValue(recordField(record, "id")),
+		TenantID:        stringValue(recordField(record, "tenant_id")),
+		UserID:          stringValue(recordField(record, "user_id")),
 		Name:            stringValue(recordField(record, "name")),
 		Kind:            stringValue(recordField(record, "kind")),
 		URL:             stringValue(recordField(record, "url")),
@@ -253,6 +367,8 @@ func sourceFromRecord(record recordReader) (ingestion.SourceConfig, error) {
 func cursorFromRecord(record recordReader) (ingestion.SourceCursor, bool, error) {
 	return ingestion.SourceCursor{
 		SourceID:      stringValue(recordField(record, "source_id")),
+		TenantID:      stringValue(recordField(record, "tenant_id")),
+		UserID:        stringValue(recordField(record, "user_id")),
 		ETag:          stringValue(recordField(record, "etag")),
 		LastModified:  stringValue(recordField(record, "last_modified")),
 		LastAttemptAt: timeValue(recordField(record, "last_attempt_at")),
@@ -261,9 +377,21 @@ func cursorFromRecord(record recordReader) (ingestion.SourceCursor, bool, error)
 	}, true, nil
 }
 
-func optionalMillis(value time.Time) interface{} {
-	if value.IsZero() {
-		return nil
+func (r *SourceRepository) applyScope(source ingestion.SourceConfig) (ingestion.SourceConfig, error) {
+	if r.scope.TenantID == "" && r.scope.UserID == "" {
+		return source, nil
 	}
-	return value.UTC().UnixMilli()
+	if err := r.scope.Validate(); err != nil {
+		return ingestion.SourceConfig{}, fmt.Errorf("source repository scope: %w", err)
+	}
+	if source.TenantID == "" {
+		source.TenantID = r.scope.TenantID
+	}
+	if source.UserID == "" {
+		source.UserID = r.scope.UserID
+	}
+	if source.TenantID != r.scope.TenantID || source.UserID != r.scope.UserID {
+		return ingestion.SourceConfig{}, errors.New("source is outside the source repository scope")
+	}
+	return source, nil
 }

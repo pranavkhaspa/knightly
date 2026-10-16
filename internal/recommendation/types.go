@@ -24,6 +24,7 @@ type PathNode struct {
 // locally inferred explanation. A recommendation is valid only when all five
 // nodes in the required traversal are present and ordered correctly.
 type EvidencePath struct {
+	TenantID      string     `json:"tenant_id,omitempty"`
 	ProjectID     string     `json:"project_id"`
 	RequirementID string     `json:"requirement_id"`
 	TechnologyID  string     `json:"technology_id"`
@@ -81,6 +82,8 @@ func (p EvidencePath) Readable() string {
 
 type Evidence struct {
 	ID          string    `json:"id"`
+	TenantID    string    `json:"tenant_id,omitempty"`
+	UserID      string    `json:"user_id,omitempty"`
 	SourceID    string    `json:"source_id"`
 	ItemID      string    `json:"item_id"`
 	URL         string    `json:"url"`
@@ -103,6 +106,7 @@ type Candidate struct {
 
 type Recommendation struct {
 	ID             string       `json:"id"`
+	TenantID       string       `json:"tenant_id,omitempty"`
 	UserID         string       `json:"user_id"`
 	ProjectID      string       `json:"project_id"`
 	ItemID         string       `json:"item_id"`

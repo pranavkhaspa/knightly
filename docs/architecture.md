@@ -31,8 +31,13 @@ nightshift_u_<stable-id>
 
 Graph names must be derived from a stable, non-display identifier. Never use a
 raw email address, display name, token, or user-provided string in a graph
-name. Every user-owned node also carries `tenant_id` or `user_id` for
-defense-in-depth query filtering.
+name. Every user-owned node also carries both `tenant_id` and `user_id` for
+defense-in-depth query filtering. Scope-aware source, item, recommendation,
+evidence, context, task, action, and tool-call queries include those
+predicates; the single-user demo endpoints additionally rely on the configured
+user graph as their routing boundary. Persisted timestamps are Unix
+milliseconds, and an absent optional timestamp is stored as graph `NULL`
+rather than numeric zero.
 
 `internal/falkor.UserGraphName` implements the stable hashed naming rule.
 `Client.EnsureUserGraph` writes a mapping derived from the authenticated
@@ -93,8 +98,12 @@ retrieval is bounded by rows and bytes.
 
 Multiple daemons can share a user graph. Scheduler and task leases are
 graph-backed, keyed by source or task ID, with an instance heartbeat and
-lease token. Stable IDs make replay idempotent. A stale worker must not be
-able to complete a task after another instance has recovered it.
+lease token. The collector accepts the same lease contract through
+`Collector.Coordinator`, `Collector.LeaseOwner`, and `Collector.LeaseLifetime`.
+Stable IDs make replay idempotent. `AgentRepository.RecoverStaleRunning`,
+`ActionRepository.RecoverStaleExecuting`, and
+`SourceRepository.RecoverStaleRuns` convert abandoned work to explicit failed
+state so a stale worker cannot silently continue after recovery.
 
 The `internal/coordination` contract and its concurrent repository harness cover
 this invariant without introducing a second durable store.

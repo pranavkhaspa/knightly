@@ -3,6 +3,7 @@ package falkor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pranavkhaspa/knightly/internal/actions"
@@ -23,8 +24,9 @@ func (r *ActionRepository) Get(ctx context.Context, userID, actionID string) (ac
 		return actions.Action{}, err
 	}
 	result, err := r.client.user.ROQuery(`
-		MATCH (a:Action)
-		WHERE a.id = $id AND a.user_id = $user_id
+		MATCH (u:User {id: $user_id})
+		MATCH (a:Action {id: $id, user_id: $user_id})
+		WHERE a.tenant_id = u.tenant_id
 		`+actionReturn+`
 		LIMIT 1
 	`, map[string]interface{}{"id": actionID, "user_id": userID}, r.client.options())
@@ -43,6 +45,19 @@ func (r *ActionRepository) Get(ctx context.Context, userID, actionID string) (ac
 func (r *ActionRepository) Create(ctx context.Context, action actions.Action) (actions.Action, error) {
 	if err := r.ready(ctx); err != nil {
 		return actions.Action{}, err
+	}
+	if strings.TrimSpace(action.TenantID) == "" || strings.TrimSpace(action.UserID) == "" {
+		return actions.Action{}, fmt.Errorf("action tenant and user IDs are required")
+	}
+	if action.ProjectID != "" {
+		if err := r.validateProject(ctx, action.TenantID, action.UserID, action.ProjectID); err != nil {
+			return actions.Action{}, fmt.Errorf("validate action project: %w", err)
+		}
+	}
+	if action.TaskID != "" {
+		if err := r.validateTask(ctx, action.TenantID, action.UserID, action.TaskID); err != nil {
+			return actions.Action{}, fmt.Errorf("validate action task: %w", err)
+		}
 	}
 	result, err := r.client.user.Query(`
 		MERGE (a:Action {tenant_id: $tenant_id, user_id: $user_id, idempotency_key: $idempotency_key})
@@ -79,8 +94,9 @@ func (r *ActionRepository) Approve(ctx context.Context, userID, actionID string,
 		return actions.Action{}, err
 	}
 	result, err := r.client.user.Query(`
-		MATCH (a:Action)
-		WHERE a.id = $id AND a.user_id = $user_id AND a.status IN ["proposed", "failed"]
+		MATCH (u:User {id: $user_id})
+		MATCH (a:Action {id: $id, user_id: $user_id})
+		WHERE a.tenant_id = u.tenant_id AND a.status IN ["proposed", "failed"]
 		SET a.status = "approved",
 		    a.approved_by = $approved_by,
 		    a.approval_id = $approval_id,
@@ -95,7 +111,7 @@ func (r *ActionRepository) Approve(ctx context.Context, userID, actionID string,
 			"approved_by":   approval.ApprovedBy,
 			"approval_id":   approval.ID,
 			"approval_note": approval.Note,
-			"approved_at":   approval.At.UnixMilli(),
+			"approved_at":   optionalMillis(approval.At),
 			"updated_at":    time.Now().UTC().UnixMilli(),
 		}, r.client.options())
 	if err == nil && result != nil && result.Next() {
@@ -136,7 +152,7 @@ func (r *ActionRepository) Save(ctx context.Context, action actions.Action) erro
 		return err
 	}
 	result, err := r.client.user.Query(`
-		MERGE (a:Action {id: $id, user_id: $user_id})
+		MERGE (a:Action {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 		ON CREATE SET a.created_at = $created_at
 		SET a.tenant_id = $tenant_id,
 		    a.project_id = $project_id,
@@ -165,15 +181,16 @@ func (r *ActionRepository) Save(ctx context.Context, action actions.Action) erro
 	}
 	if action.Status == actions.Approved || action.Status == actions.Executing || action.Status == actions.Completed {
 		if _, err := r.client.user.Query(`
-			MATCH (u:User {id: $user_id})
-			MATCH (a:Action {id: $id, user_id: $user_id})
+			MATCH (u:User {id: $user_id, tenant_id: $tenant_id})
+			MATCH (a:Action {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 			MERGE (u)-[approval:APPROVED]->(a)
 			SET approval.approved_at = $approved_at, approval.approval_id = $approval_id,
 			    approval.note = $approval_note
 		`, map[string]interface{}{
 			"user_id":       action.UserID,
+			"tenant_id":     action.TenantID,
 			"id":            action.ID,
-			"approved_at":   action.ApprovedAt.UnixMilli(),
+			"approved_at":   optionalMillis(action.ApprovedAt),
 			"approval_id":   action.ApprovalID,
 			"approval_note": action.ApprovalNote,
 		}, r.client.options()); err != nil {
@@ -188,8 +205,9 @@ func (r *ActionRepository) ClaimForExecution(ctx context.Context, userID, action
 		return actions.Action{}, err
 	}
 	result, err := r.client.user.Query(`
-		MATCH (a:Action)
-		WHERE a.id = $id AND a.user_id = $user_id AND a.status = "approved"
+		MATCH (u:User {id: $user_id})
+		MATCH (a:Action {id: $id, user_id: $user_id})
+		WHERE a.tenant_id = u.tenant_id AND a.status = "approved"
 		SET a.status = "executing", a.updated_at = $updated_at
 		`+actionReturn, map[string]interface{}{"id": actionID, "user_id": userID, "updated_at": timeNowMillis()}, r.client.options())
 	if err == nil && result != nil && result.Next() {
@@ -206,6 +224,65 @@ func (r *ActionRepository) ClaimForExecution(ctx context.Context, userID, action
 		return current, nil
 	}
 	return current, actions.ErrActionNotClaimable
+}
+
+// RecoverStaleExecuting moves abandoned external actions to Failed so they
+// require an explicit approval before a retry. It is safe to call repeatedly.
+func (r *ActionRepository) RecoverStaleExecuting(ctx context.Context, tenantID, userID string, before time.Time) (int, error) {
+	if err := r.ready(ctx); err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" || before.IsZero() {
+		return 0, fmt.Errorf("tenant, user, and stale cutoff are required")
+	}
+	result, err := r.client.user.Query(`
+		MATCH (a:Action {tenant_id: $tenant_id, user_id: $user_id, status: "executing"})
+		WHERE coalesce(a.updated_at, a.created_at, 0) < $cutoff
+		SET a.status = "failed", a.error = "recovered stale executing action", a.updated_at = $recovered_at
+		RETURN count(a) AS recovered
+	`, map[string]interface{}{
+		"tenant_id":    tenantID,
+		"user_id":      userID,
+		"cutoff":       before.UTC().UnixMilli(),
+		"recovered_at": time.Now().UTC().UnixMilli(),
+	}, r.client.options())
+	if err != nil {
+		return 0, fmt.Errorf("recover stale executing actions: %w", err)
+	}
+	if !result.Next() {
+		return 0, nil
+	}
+	return int(recordInt64(recordValue(result.Record(), "recovered"))), nil
+}
+
+func (r *ActionRepository) validateProject(ctx context.Context, tenantID, userID, projectID string) error {
+	result, err := r.client.user.ROQuery(`
+		MATCH (p:Project {id: $project_id, tenant_id: $tenant_id, user_id: $user_id})
+		RETURN p.id AS id
+		LIMIT 1
+	`, map[string]interface{}{"project_id": projectID, "tenant_id": tenantID, "user_id": userID}, r.client.options())
+	if err != nil {
+		return err
+	}
+	if err := requireQueryRow(result, "find action project"); err != nil {
+		return fmt.Errorf("project %q is not in the action scope", projectID)
+	}
+	return nil
+}
+
+func (r *ActionRepository) validateTask(ctx context.Context, tenantID, userID, taskID string) error {
+	result, err := r.client.user.ROQuery(`
+		MATCH (t:Task {id: $task_id, tenant_id: $tenant_id, user_id: $user_id})
+		RETURN t.id AS id
+		LIMIT 1
+	`, map[string]interface{}{"task_id": taskID, "tenant_id": tenantID, "user_id": userID}, r.client.options())
+	if err != nil {
+		return err
+	}
+	if err := requireQueryRow(result, "find action task"); err != nil {
+		return fmt.Errorf("task %q is not in the action scope", taskID)
+	}
+	return nil
 }
 
 func (r *ActionRepository) ready(ctx context.Context) error {
@@ -234,12 +311,12 @@ func actionParams(action actions.Action) map[string]interface{} {
 		"approved_by":      action.ApprovedBy,
 		"approval_id":      action.ApprovalID,
 		"approval_note":    action.ApprovalNote,
-		"approved_at":      action.ApprovedAt.UnixMilli(),
+		"approved_at":      optionalMillis(action.ApprovedAt),
 		"result_reference": action.ResultReference,
 		"result":           action.Result,
 		"error":            action.Error,
-		"created_at":       action.CreatedAt.UnixMilli(),
-		"updated_at":       action.UpdatedAt.UnixMilli(),
+		"created_at":       optionalMillis(action.CreatedAt),
+		"updated_at":       optionalMillis(action.UpdatedAt),
 	}
 }
 

@@ -90,6 +90,7 @@ func TestHandoffRejectsCompletedSource(t *testing.T) {
 	coordinator := NewCoordinator(repository)
 	_, err := coordinator.CreateTask(context.Background(), Task{
 		ID:       "task_done",
+		TenantID: "tenant_demo",
 		UserID:   "user_demo",
 		Agent:    ScoutAgent,
 		Status:   Completed,

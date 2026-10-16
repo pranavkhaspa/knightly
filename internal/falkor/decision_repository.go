@@ -78,7 +78,7 @@ func (r *DecisionRepository) SaveDecision(ctx context.Context, value session.Dec
 	if len(value.EvidenceIDs) > 0 {
 		result, err := graph.ROQuery(`
 			UNWIND $evidence_ids AS evidence_id
-			MATCH (e:Evidence {id: evidence_id, user_id: $user_id})
+			MATCH (e:Evidence {id: evidence_id, tenant_id: $tenant_id, user_id: $user_id})
 			RETURN count(e) = size($evidence_ids) AS complete
 		`, map[string]interface{}{
 			"id": value.ID, "tenant_id": value.TenantID, "user_id": value.UserID, "evidence_ids": value.EvidenceIDs,
@@ -92,7 +92,7 @@ func (r *DecisionRepository) SaveDecision(ctx context.Context, value session.Dec
 		if _, err := graph.Query(`
 			MATCH (d:Decision {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 			UNWIND $evidence_ids AS evidence_id
-			MATCH (e:Evidence {id: evidence_id, user_id: $user_id})
+			MATCH (e:Evidence {id: evidence_id, tenant_id: $tenant_id, user_id: $user_id})
 			MERGE (d)-[:BASED_ON]->(e)
 		`, map[string]interface{}{
 			"id": value.ID, "tenant_id": value.TenantID, "user_id": value.UserID, "evidence_ids": value.EvidenceIDs,
@@ -171,8 +171,8 @@ func decisionParams(value session.Decision) map[string]interface{} {
 		"rationale":    value.Rationale,
 		"status":       string(value.Status),
 		"evidence_ids": value.EvidenceIDs,
-		"created_at":   value.CreatedAt.UnixMilli(),
-		"updated_at":   value.UpdatedAt.UnixMilli(),
+		"created_at":   optionalMillis(value.CreatedAt),
+		"updated_at":   optionalMillis(value.UpdatedAt),
 	}
 }
 

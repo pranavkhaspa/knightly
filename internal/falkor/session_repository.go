@@ -112,10 +112,10 @@ func sessionParams(value session.Session) map[string]interface{} {
 		"title":      value.Title,
 		"summary":    value.Summary,
 		"status":     string(value.Status),
-		"started_at": value.StartedAt.UnixMilli(),
-		"ended_at":   value.EndedAt.UnixMilli(),
-		"created_at": value.CreatedAt.UnixMilli(),
-		"updated_at": value.UpdatedAt.UnixMilli(),
+		"started_at": optionalMillis(value.StartedAt),
+		"ended_at":   optionalMillis(value.EndedAt),
+		"created_at": optionalMillis(value.CreatedAt),
+		"updated_at": optionalMillis(value.UpdatedAt),
 	}
 }
 

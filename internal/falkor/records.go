@@ -60,6 +60,16 @@ func timeValue(value interface{}) time.Time {
 	return time.UnixMilli(millis).UTC()
 }
 
+// optionalMillis preserves FalkorDB NULL for absent timestamps. A numeric zero
+// is a valid Unix instant but is not a useful representation of an optional
+// application timestamp, so zero time values are stored as NULL instead.
+func optionalMillis(value time.Time) interface{} {
+	if value.IsZero() {
+		return nil
+	}
+	return value.UTC().UnixMilli()
+}
+
 func jsonMap(value map[string]string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)

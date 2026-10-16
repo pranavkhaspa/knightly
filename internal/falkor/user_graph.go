@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	dbclient "github.com/FalkorDB/falkordb-go/v2"
@@ -85,14 +86,16 @@ func (c *Client) EnsureUserGraph(ctx context.Context, scope identity.Scope) (str
 		return "", errors.New("FalkorDB control graph is not configured")
 	}
 	graphName := UserGraphName(scope.TenantID, scope.UserID)
+	updatedAt := time.Now().UTC().UnixMilli()
 	result, err := c.control.Query(`
 		MERGE (mapping:UserGraph {tenant_id: $tenant_id, user_id: $user_id})
-		SET mapping.graph_name = $graph_name, mapping.updated_at = timestamp()
+		SET mapping.graph_name = $graph_name, mapping.updated_at = $updated_at
 		RETURN mapping.graph_name AS graph_name
 	`, map[string]interface{}{
 		"tenant_id":  scope.TenantID,
 		"user_id":    scope.UserID,
 		"graph_name": graphName,
+		"updated_at": updatedAt,
 	}, c.options())
 	if err != nil {
 		return "", fmt.Errorf("ensure user graph mapping: %w", err)

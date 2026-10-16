@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pranavkhaspa/knightly/internal/coordination"
 )
 
 type collectionRepository struct {
@@ -149,5 +151,87 @@ func TestCollectorRecordsOneSourceFailureAndContinues(t *testing.T) {
 	}
 	if summary.Succeeded != 1 || summary.Failed != 1 || summary.Errors["source_bad"] == "" {
 		t.Fatalf("summary = %+v, want one failed and one successful source", summary)
+	}
+}
+
+type sourceLeaseHarness struct {
+	mu       sync.Mutex
+	active   bool
+	acquired []coordination.LeaseRequest
+	released []string
+}
+
+func (h *sourceLeaseHarness) AcquireLease(_ context.Context, request coordination.LeaseRequest) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.active {
+		return false, nil
+	}
+	h.active = true
+	h.acquired = append(h.acquired, request)
+	return true, nil
+}
+
+func (h *sourceLeaseHarness) ReleaseLease(_ context.Context, _, token string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.active = false
+	h.released = append(h.released, token)
+	return nil
+}
+
+func TestCollectorUsesScopedSourceLeaseAndReleasesIt(t *testing.T) {
+	source := SourceConfig{
+		ID:       "source_fixture",
+		TenantID: "tenant-a",
+		UserID:   "user-a",
+		Name:     "Fixture",
+		Kind:     SourceKindFixture,
+		URL:      "https://example.invalid/feed",
+		Enabled:  true,
+	}
+	repository := newCollectionRepository(source)
+	collector, err := NewCollector(repository, NewPipeline(repository), NewHTTPAdapterRegistry(nil, 0, "test-agent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &sourceLeaseHarness{}
+	collector.Coordinator = lease
+	collector.LeaseOwner = "instance-a"
+	collector.Now = func() time.Time { return time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC) }
+
+	summary, err := collector.RunNow(context.Background())
+	if err != nil {
+		t.Fatalf("RunNow() error = %v", err)
+	}
+	if summary.Succeeded != 1 || len(lease.acquired) != 1 || len(lease.released) != 1 {
+		t.Fatalf("summary=%+v acquired=%+v released=%+v", summary, lease.acquired, lease.released)
+	}
+	request := lease.acquired[0]
+	if request.Key != "source:tenant-a:user-a:source_fixture" || request.Owner != "instance-a" || request.Lifetime <= 0 {
+		t.Fatalf("source lease request = %+v", request)
+	}
+	if len(summary.Runs) != 1 || summary.Runs[0].TenantID != "tenant-a" || summary.Runs[0].UserID != "user-a" {
+		t.Fatalf("source run scope = %+v", summary.Runs)
+	}
+}
+
+func TestCollectorSkipsSourceWhenLeaseIsHeld(t *testing.T) {
+	source := SourceConfig{ID: "source_held", TenantID: "tenant-a", UserID: "user-a", Name: "Fixture", Kind: SourceKindFixture, URL: "https://example.invalid/feed", Enabled: true}
+	repository := newCollectionRepository(source)
+	collector, err := NewCollector(repository, NewPipeline(repository), NewHTTPAdapterRegistry(nil, 0, "test-agent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &sourceLeaseHarness{active: true}
+	collector.Coordinator = lease
+	collector.LeaseOwner = "instance-b"
+
+	summary, err := collector.RunNow(context.Background())
+	if err != nil {
+		t.Fatalf("RunNow() error = %v", err)
+	}
+	if summary.Skipped != 1 || summary.Succeeded != 0 || len(summary.Runs) != 0 || len(repository.runs) != 0 {
+		t.Fatalf("held-source summary=%+v runs=%+v", summary, repository.runs)
 	}
 }

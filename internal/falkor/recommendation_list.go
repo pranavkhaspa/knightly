@@ -3,6 +3,7 @@ package falkor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pranavkhaspa/knightly/internal/recommendation"
 )
@@ -11,13 +12,18 @@ func (c *Client) ListRecommendations(ctx context.Context, userID, projectID stri
 	if err := c.ready(ctx); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(userID) == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
 	result, err := c.user.ROQuery(`
+		MATCH (u:User {id: $user_id})
 		MATCH (r:Recommendation {user_id: $user_id})
 		WHERE ($project_id = "" OR r.project_id = $project_id)
-		RETURN r.id AS id, r.user_id AS user_id, r.project_id AS project_id,
+		  AND r.tenant_id = u.tenant_id
+		RETURN r.id AS id, r.tenant_id AS tenant_id, r.user_id AS user_id, r.project_id AS project_id,
 		       r.item_id AS item_id, r.title AS title, r.summary AS summary,
 		       r.why AS why, r.score AS score, r.ranking_version AS ranking_version,
 		       r.query_name AS query_name, r.path_readable AS path_readable,
@@ -33,6 +39,7 @@ func (c *Client) ListRecommendations(ctx context.Context, userID, projectID stri
 		record := result.Record()
 		items = append(items, recommendation.Recommendation{
 			ID:             stringValue(recordField(record, "id")),
+			TenantID:       stringValue(recordField(record, "tenant_id")),
 			UserID:         stringValue(recordField(record, "user_id")),
 			ProjectID:      stringValue(recordField(record, "project_id")),
 			ItemID:         stringValue(recordField(record, "item_id")),

@@ -13,7 +13,9 @@ import (
 
 	"github.com/pranavkhaspa/knightly/internal/actions"
 	"github.com/pranavkhaspa/knightly/internal/coordination"
+	"github.com/pranavkhaspa/knightly/internal/identity"
 	"github.com/pranavkhaspa/knightly/internal/ingestion"
+	"github.com/pranavkhaspa/knightly/internal/mcp"
 	"github.com/pranavkhaspa/knightly/internal/recommendation"
 )
 
@@ -117,6 +119,48 @@ func TestFalkorDBIntegrationPersistsIngestionAndEvidencePath(t *testing.T) {
 	}
 }
 
+func TestFalkorDBIntegrationRejectsPlannerOwnershipMismatchBeforeWrites(t *testing.T) {
+	client := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := client.Initialize(); err != nil {
+		t.Fatalf("initialize graph: %v", err)
+	}
+	result, err := ingestion.NewPipeline(client).Run(ctx, ingestion.DefaultFixtureSource())
+	if err != nil {
+		t.Fatalf("ingest fixture: %v", err)
+	}
+	item := result.Items[0]
+	recommendations, err := recommendation.NewService(client).Recommend(ctx, "user_demo", "project_nightshift", []recommendation.Candidate{{
+		ItemID: item.ID, Title: item.Title, Summary: item.Summary, URL: item.CanonicalURL, SourceID: item.SourceID,
+		ContentHash: item.ContentHash, Score: 5,
+	}})
+	if err != nil || len(recommendations) != 1 {
+		t.Fatalf("create recommendation: recommendations=%#v err=%v", recommendations, err)
+	}
+	_, err = client.ProposePlan(ctx, mcp.ProposePlanInput{
+		Meta:             mcp.RequestMeta{TenantID: "tenant_demo", UserID: "user_demo"},
+		ProjectID:        "project_other",
+		RecommendationID: recommendations[0].ID,
+		Goal:             "must not be persisted",
+	})
+	if err == nil {
+		t.Fatal("planner ownership mismatch unexpectedly succeeded")
+	}
+	for _, query := range []string{
+		`MATCH (n:Task) WHERE n.tenant_id = $tenant_id AND n.user_id = $user_id RETURN count(n) AS count`,
+		`MATCH (n:Action) WHERE n.tenant_id = $tenant_id AND n.user_id = $user_id RETURN count(n) AS count`,
+	} {
+		countResult, countErr := client.user.ROQuery(query, map[string]interface{}{"tenant_id": "tenant_demo", "user_id": "user_demo"}, client.options())
+		if countErr != nil {
+			t.Fatalf("count planner writes: %v", countErr)
+		}
+		if !countResult.Next() || int64Value(recordValue(countResult.Record(), "count")) != 0 {
+			t.Fatalf("planner wrote task/action after ownership failure")
+		}
+	}
+}
+
 func TestFalkorDBIntegrationMakesApprovedActionIdempotent(t *testing.T) {
 	client := integrationClient(t)
 	if err := client.Initialize(); err != nil {
@@ -206,6 +250,39 @@ func TestFalkorDBIntegrationCoordinatesConcurrentCompletion(t *testing.T) {
 	record, found, err := client.FindIdempotency(context.Background(), key)
 	if err != nil || !found || string(record.Payload) != "live-falkordb-result" {
 		t.Fatalf("graph idempotency record = %#v found=%v err=%v", record, found, err)
+	}
+}
+
+func TestFalkorDBIntegrationRecoversStaleTaskActionAndSourceRun(t *testing.T) {
+	client := integrationClient(t)
+	if err := client.Initialize(); err != nil {
+		t.Fatalf("initialize graph: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	old := time.Now().UTC().Add(-time.Hour).UnixMilli()
+	_, err := client.user.Query(`
+		MERGE (t:Task {id: "stale_task", tenant_id: "tenant_demo", user_id: "user_demo"})
+		SET t.status = "running", t.created_at = $old, t.updated_at = $old
+		MERGE (a:Action {id: "stale_action", tenant_id: "tenant_demo", user_id: "user_demo"})
+		SET a.status = "executing", a.created_at = $old, a.updated_at = $old
+		MERGE (s:Source {id: "stale_source", tenant_id: "tenant_demo", user_id: "user_demo"})
+		SET s.name = "stale", s.kind = "fixture", s.url = "https://example.invalid/stale"
+		MERGE (run:SourceRun {id: "stale_run", source_id: "stale_source", tenant_id: "tenant_demo", user_id: "user_demo"})
+		SET run.status = "running", run.started_at = $old, run.updated_at = $old
+	`, map[string]interface{}{"old": old}, client.options())
+	if err != nil {
+		t.Fatalf("seed stale records: %v", err)
+	}
+	cutoff := time.Now().UTC().Add(-30 * time.Minute)
+	if recovered, err := NewAgentRepository(client).RecoverStaleRunning(ctx, "tenant_demo", "user_demo", cutoff); err != nil || recovered != 1 {
+		t.Fatalf("recover stale task = %d, err=%v", recovered, err)
+	}
+	if recovered, err := NewActionRepository(client).RecoverStaleExecuting(ctx, "tenant_demo", "user_demo", cutoff); err != nil || recovered != 1 {
+		t.Fatalf("recover stale action = %d, err=%v", recovered, err)
+	}
+	if recovered, err := NewSourceRepository(client, identity.Scope{TenantID: "tenant_demo", UserID: "user_demo"}).RecoverStaleRuns(ctx, "tenant_demo", "user_demo", cutoff); err != nil || recovered != 1 {
+		t.Fatalf("recover stale source run = %d, err=%v", recovered, err)
 	}
 }
 

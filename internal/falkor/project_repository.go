@@ -103,8 +103,8 @@ func projectParams(value project.Project) map[string]interface{} {
 		"status":           string(value.Status),
 		"repository_url":   value.RepositoryURL,
 		"desired_outcomes": value.DesiredOutcomes,
-		"created_at":       value.CreatedAt.UnixMilli(),
-		"updated_at":       value.UpdatedAt.UnixMilli(),
+		"created_at":       optionalMillis(value.CreatedAt),
+		"updated_at":       optionalMillis(value.UpdatedAt),
 	}
 }
 

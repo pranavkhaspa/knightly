@@ -419,8 +419,8 @@ func (s *Server) run(ctx context.Context, name ToolName, meta RequestMeta, input
 }
 
 func validateMeta(meta RequestMeta) error {
-	if strings.TrimSpace(meta.UserID) == "" {
-		return fmt.Errorf("%w: user ID is required", ErrInvalidToolInput)
+	if strings.TrimSpace(meta.TenantID) == "" || strings.TrimSpace(meta.UserID) == "" {
+		return fmt.Errorf("%w: tenant and user IDs are required", ErrInvalidToolInput)
 	}
 	return nil
 }

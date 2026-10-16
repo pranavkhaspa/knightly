@@ -34,7 +34,7 @@ func (c *Client) FindIdempotency(ctx context.Context, key string) (coordination.
 		Key:      stringValue(recordValue(record, "key")),
 		Token:    stringValue(recordValue(record, "token")),
 		Payload:  []byte(stringValue(recordValue(record, "payload"))),
-		StoredAt: time.UnixMilli(int64Value(recordValue(record, "stored_at"))),
+		StoredAt: timeValue(recordValue(record, "stored_at")),
 	}, true, nil
 }
 
@@ -47,6 +47,9 @@ func (c *Client) AcquireLease(ctx context.Context, request coordination.LeaseReq
 	}
 	if request.Key == "" || request.Owner == "" || request.Token == "" || request.Lifetime <= 0 {
 		return false, coordination.ErrInvalidRequest
+	}
+	if request.Now.IsZero() {
+		request.Now = time.Now().UTC()
 	}
 	now := request.Now.UnixMilli()
 	expires := request.Now.Add(request.Lifetime).UnixMilli()
@@ -98,7 +101,7 @@ func (c *Client) StoreIdempotency(ctx context.Context, write coordination.Idempo
 		"key":       write.Key,
 		"token":     write.Token,
 		"payload":   string(write.Payload),
-		"stored_at": write.StoredAt.UnixMilli(),
+		"stored_at": optionalMillis(write.StoredAt),
 	}, c.options())
 	if err != nil {
 		return false, fmt.Errorf("store graph idempotency record: %w", err)

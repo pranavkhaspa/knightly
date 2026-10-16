@@ -49,7 +49,7 @@ evolving memory → graph-backed Relevance/Planner handoff.
 
 ## Requirements
 
-- Go 1.24 or newer
+- Go 1.27 or newer
 - FalkorDB 1.0+ reachable through its Redis-compatible endpoint
 - Docker is optional and only used for local FalkorDB development
 

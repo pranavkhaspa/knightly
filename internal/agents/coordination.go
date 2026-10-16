@@ -108,6 +108,12 @@ type Repository interface {
 	PersistHandoff(context.Context, Task, Handoff) error
 }
 
+// StaleRecoveryRepository is optional so lightweight test repositories do not
+// need to implement operational recovery behavior.
+type StaleRecoveryRepository interface {
+	RecoverStaleRunning(context.Context, string, string, time.Time) (int, error)
+}
+
 type Coordinator struct {
 	repository Repository
 	now        func() time.Time
@@ -218,9 +224,23 @@ func (c *Coordinator) Handoff(ctx context.Context, request HandoffRequest) (Hand
 	return cloneHandoff(handoff), nil
 }
 
+func (c *Coordinator) RecoverStaleRunning(ctx context.Context, tenantID, userID string, before time.Time) (int, error) {
+	if c == nil || c.repository == nil {
+		return 0, fmt.Errorf("%w: repository is required", ErrInvalidTask)
+	}
+	recovery, ok := c.repository.(StaleRecoveryRepository)
+	if !ok {
+		return 0, fmt.Errorf("%w: stale task recovery is not supported", ErrInvalidTask)
+	}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" || before.IsZero() {
+		return 0, fmt.Errorf("%w: tenant, user, and stale cutoff are required", ErrInvalidTask)
+	}
+	return recovery.RecoverStaleRunning(ctx, tenantID, userID, before)
+}
+
 func validateTask(task Task) error {
-	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.UserID) == "" {
-		return fmt.Errorf("%w: ID and user ID are required", ErrInvalidTask)
+	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.TenantID) == "" || strings.TrimSpace(task.UserID) == "" {
+		return fmt.Errorf("%w: ID, tenant ID, and user ID are required", ErrInvalidTask)
 	}
 	if !task.Agent.Valid() {
 		return fmt.Errorf("%w: unknown agent %q", ErrInvalidTask, task.Agent)

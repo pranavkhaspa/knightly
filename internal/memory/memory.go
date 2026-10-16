@@ -226,8 +226,8 @@ func normalizeQuery(query RetrievalQuery) RetrievalQuery {
 }
 
 func validateQuery(query RetrievalQuery) error {
-	if strings.TrimSpace(query.UserID) == "" {
-		return fmt.Errorf("%w: user ID is required", ErrInvalidQuery)
+	if strings.TrimSpace(query.TenantID) == "" || strings.TrimSpace(query.UserID) == "" {
+		return fmt.Errorf("%w: tenant and user IDs are required", ErrInvalidQuery)
 	}
 	if query.Limit < 1 || query.Limit > 100 {
 		return fmt.Errorf("%w: limit must be between 1 and 100", ErrInvalidQuery)
@@ -244,8 +244,8 @@ func validateQuery(query RetrievalQuery) error {
 }
 
 func validateMemory(item Memory) error {
-	if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.UserID) == "" {
-		return fmt.Errorf("%w: ID and user ID are required", ErrInvalidMemory)
+	if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.TenantID) == "" || strings.TrimSpace(item.UserID) == "" {
+		return fmt.Errorf("%w: ID, tenant ID, and user ID are required", ErrInvalidMemory)
 	}
 	if !item.Type.Valid() {
 		return fmt.Errorf("%w: unknown memory type %q", ErrInvalidMemory, item.Type)

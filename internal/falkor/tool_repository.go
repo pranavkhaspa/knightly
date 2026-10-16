@@ -22,7 +22,7 @@ func (r *ToolCallRepository) Record(ctx context.Context, call mcp.ToolCall) erro
 		return err
 	}
 	result, err := r.client.user.Query(`
-		MERGE (tc:ToolCall {id: $id})
+		MERGE (tc:ToolCall {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 		ON CREATE SET tc.started_at = $started_at
 		SET tc.name = $name,
 		    tc.request_id = $request_id,
@@ -49,14 +49,16 @@ func (r *ToolCallRepository) Complete(ctx context.Context, call mcp.ToolCall) er
 		return err
 	}
 	result, err := r.client.user.Query(`
-		MATCH (tc:ToolCall {id: $id})
+		MATCH (tc:ToolCall {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 		SET tc.status = $status, tc.error = $error, tc.completed_at = $completed_at
 		RETURN tc.id AS id
 	`, map[string]interface{}{
 		"id":           call.ID,
+		"tenant_id":    call.TenantID,
+		"user_id":      call.UserID,
 		"status":       string(call.Status),
 		"error":        call.Error,
-		"completed_at": call.CompletedAt.UnixMilli(),
+		"completed_at": optionalMillis(call.CompletedAt),
 	}, r.client.options())
 	if err != nil {
 		return fmt.Errorf("complete tool call in graph: %w", err)
@@ -70,19 +72,19 @@ func (r *ToolCallRepository) linkToolCall(ctx context.Context, call mcp.ToolCall
 	}
 	if call.SessionID != "" {
 		if _, err := r.client.user.Query(`
-			MATCH (tc:ToolCall {id: $tool_call_id})
-			MATCH (s:Session {id: $session_id, user_id: $user_id})
+			MATCH (tc:ToolCall {id: $tool_call_id, tenant_id: $tenant_id, user_id: $user_id})
+			MATCH (s:Session {id: $session_id, tenant_id: $tenant_id, user_id: $user_id})
 			MERGE (s)-[:CONTAINS]->(tc)
-		`, map[string]interface{}{"tool_call_id": call.ID, "session_id": call.SessionID, "user_id": call.UserID}, r.client.options()); err != nil {
+		`, map[string]interface{}{"tool_call_id": call.ID, "session_id": call.SessionID, "tenant_id": call.TenantID, "user_id": call.UserID}, r.client.options()); err != nil {
 			return fmt.Errorf("link tool call session in graph: %w", err)
 		}
 	}
 	if call.TaskID != "" {
 		if _, err := r.client.user.Query(`
-			MATCH (tc:ToolCall {id: $tool_call_id})
-			MATCH (t:Task {id: $task_id, user_id: $user_id})
+			MATCH (tc:ToolCall {id: $tool_call_id, tenant_id: $tenant_id, user_id: $user_id})
+			MATCH (t:Task {id: $task_id, tenant_id: $tenant_id, user_id: $user_id})
 			MERGE (tc)-[:EXECUTED_FOR]->(t)
-		`, map[string]interface{}{"tool_call_id": call.ID, "task_id": call.TaskID, "user_id": call.UserID}, r.client.options()); err != nil {
+		`, map[string]interface{}{"tool_call_id": call.ID, "task_id": call.TaskID, "tenant_id": call.TenantID, "user_id": call.UserID}, r.client.options()); err != nil {
 			return fmt.Errorf("link tool call task in graph: %w", err)
 		}
 	}
@@ -111,6 +113,6 @@ func toolCallParams(call mcp.ToolCall) map[string]interface{} {
 		"input_type": call.InputType,
 		"status":     string(call.Status),
 		"error":      call.Error,
-		"started_at": call.StartedAt.UnixMilli(),
+		"started_at": optionalMillis(call.StartedAt),
 	}
 }

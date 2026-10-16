@@ -96,8 +96,8 @@ func profileParams(value profile.Profile) map[string]interface{} {
 		"quiet_hours_end":               value.QuietHours.End,
 		"quiet_hours_timezone":          value.QuietHours.Timezone,
 		"notification_preferences_json": jsonMap(value.NotificationPreferences),
-		"created_at":                    value.CreatedAt.UnixMilli(),
-		"updated_at":                    value.UpdatedAt.UnixMilli(),
+		"created_at":                    optionalMillis(value.CreatedAt),
+		"updated_at":                    optionalMillis(value.UpdatedAt),
 	}
 }
 

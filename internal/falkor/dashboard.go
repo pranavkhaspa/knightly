@@ -51,6 +51,9 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 
 	pathResult, err := c.user.ROQuery(`
 		MATCH (p:Project)-[:HAS_REQUIREMENT]->(r:Requirement)-[:NEEDS]->(tech:Technology)
+		WHERE p.tenant_id IS NOT NULL AND p.user_id IS NOT NULL
+		  AND r.tenant_id = p.tenant_id AND r.user_id = p.user_id
+		  AND tech.tenant_id = p.tenant_id AND tech.user_id = p.user_id
 		RETURN p.id AS project_id, p.name AS project_name, p.status AS project_status,
 		       r.id AS requirement_id, r.title AS requirement_title,
 		       tech.id AS technology_id, tech.name AS technology_name,
@@ -85,6 +88,7 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 	} else {
 		projectResult, projectErr := c.user.ROQuery(`
 			MATCH (p:Project)
+			WHERE p.tenant_id IS NOT NULL AND p.user_id IS NOT NULL
 			RETURN p.id AS project_id, p.name AS project_name, p.status AS project_status
 			ORDER BY p.id
 			LIMIT 1
@@ -107,6 +111,7 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 	}
 	taskResult, err := c.user.ROQuery(`
 		MATCH (t:Task)
+		WHERE t.tenant_id IS NOT NULL AND t.user_id IS NOT NULL
 		RETURN t.id AS task_id, t.title AS task_title, t.agent_type AS task_agent,
 		       t.status AS task_status, t.priority AS task_priority,
 		       t.updated_at AS task_updated_at

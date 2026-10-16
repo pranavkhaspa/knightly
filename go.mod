@@ -1,6 +1,6 @@
 module github.com/pranavkhaspa/knightly
 
-go 1.24
+go 1.27
 
 require (
 	github.com/FalkorDB/falkordb-go/v2 v2.1.0

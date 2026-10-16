@@ -21,6 +21,14 @@ var (
 	_ mcp.FeedbackRecorder = (*Client)(nil)
 )
 
+const plannerValidationQuery = `
+MATCH (p:Project {id: $project_id, tenant_id: $tenant_id, user_id: $user_id})
+MATCH (p)-[:HAS_REQUIREMENT]->(:Requirement {tenant_id: $tenant_id, user_id: $user_id})
+MATCH (r:Recommendation {id: $recommendation_id, tenant_id: $tenant_id, user_id: $user_id, project_id: $project_id})
+RETURN p.id AS project_id, r.id AS recommendation_id
+LIMIT 1
+`
+
 // SearchRelevantItems is a fixed, bounded graph tool. The caller supplies a
 // natural-language hint, but it cannot supply Cypher or a graph name.
 func (c *Client) SearchRelevantItems(ctx context.Context, input mcp.SearchRelevantItemsInput) (mcp.SearchRelevantItemsOutput, error) {
@@ -33,9 +41,13 @@ func (c *Client) SearchRelevantItems(ctx context.Context, input mcp.SearchReleva
 	}
 	query := strings.ToLower(strings.TrimSpace(input.Query))
 	result, err := c.user.ROQuery(`
-		MATCH (p:Project {id: $project_id})-[:HAS_REQUIREMENT]->(r:Requirement)
+		MATCH (p:Project {id: $project_id, tenant_id: $tenant_id, user_id: $user_id})-[:HAS_REQUIREMENT]->(r:Requirement)
 		      -[:NEEDS]->(tech:Technology)<-[:MENTIONS]-(item:Item)-[:FROM]->(source:Source)
-		WHERE ($query = "" OR toLower(item.title) CONTAINS $query OR toLower(item.summary) CONTAINS $query)
+		WHERE r.tenant_id = $tenant_id AND r.user_id = $user_id
+		  AND tech.tenant_id = $tenant_id AND tech.user_id = $user_id
+		  AND item.tenant_id = $tenant_id AND item.user_id = $user_id
+		  AND source.tenant_id = $tenant_id AND source.user_id = $user_id
+		  AND ($query = "" OR toLower(item.title) CONTAINS $query OR toLower(item.summary) CONTAINS $query)
 		RETURN DISTINCT item.id AS item_id, item.title AS item_title,
 		       item.summary AS item_summary, source.id AS source_id,
 		       tech.id AS technology_id
@@ -43,6 +55,8 @@ func (c *Client) SearchRelevantItems(ctx context.Context, input mcp.SearchReleva
 		LIMIT $limit
 	`, map[string]interface{}{
 		"project_id": input.ProjectID,
+		"tenant_id":  input.Meta.TenantID,
+		"user_id":    input.Meta.UserID,
 		"query":      query,
 		"limit":      limit,
 	}, c.options())
@@ -77,12 +91,16 @@ func (c *Client) ExplainRecommendation(ctx context.Context, input mcp.ExplainRec
 		return mcp.RecommendationExplanation{}, err
 	}
 	result, err := c.user.ROQuery(`
-		MATCH (r:Recommendation {id: $recommendation_id})
-		OPTIONAL MATCH (r)-[:SUPPORTED_BY]->(e:Evidence)
+		MATCH (r:Recommendation {id: $recommendation_id, tenant_id: $tenant_id, user_id: $user_id})
+		OPTIONAL MATCH (r)-[:SUPPORTED_BY]->(e:Evidence {tenant_id: $tenant_id, user_id: $user_id})
 		RETURN r.id AS recommendation_id, r.why AS why,
 		       r.path_readable AS path_readable, collect(e.id) AS evidence_ids
 		LIMIT 1
-	`, map[string]interface{}{"recommendation_id": input.RecommendationID}, c.options())
+	`, map[string]interface{}{
+		"recommendation_id": input.RecommendationID,
+		"tenant_id":         input.Meta.TenantID,
+		"user_id":           input.Meta.UserID,
+	}, c.options())
 	if err != nil {
 		return mcp.RecommendationExplanation{}, fmt.Errorf("explain recommendation: %w", err)
 	}
@@ -107,6 +125,12 @@ func (c *Client) ProposePlan(ctx context.Context, input mcp.ProposePlanInput) (m
 	}
 	if strings.TrimSpace(input.Meta.UserID) == "" || strings.TrimSpace(input.ProjectID) == "" || strings.TrimSpace(input.RecommendationID) == "" {
 		return mcp.PlanProposal{}, errors.New("user, project, and recommendation are required")
+	}
+	if strings.TrimSpace(input.Meta.TenantID) == "" {
+		return mcp.PlanProposal{}, errors.New("tenant is required")
+	}
+	if err := c.validatePlannerContext(ctx, input); err != nil {
+		return mcp.PlanProposal{}, err
 	}
 	taskID := stableID("task_planner", input.Meta.UserID+"\x00"+input.RecommendationID)
 	actionID := stableID("action_plan", input.Meta.UserID+"\x00"+input.RecommendationID)
@@ -145,12 +169,14 @@ func (c *Client) ProposePlan(ctx context.Context, input mcp.ProposePlanInput) (m
 		return mcp.PlanProposal{}, fmt.Errorf("persist proposed action: %w", err)
 	}
 	if _, err := c.user.Query(`
-		MATCH (a:Action {id: $action_id, user_id: $user_id})
-		MATCH (r:Recommendation {id: $recommendation_id, user_id: $user_id})
+		MATCH (a:Action {id: $action_id, tenant_id: $tenant_id, user_id: $user_id})
+		MATCH (r:Recommendation {id: $recommendation_id, tenant_id: $tenant_id, user_id: $user_id, project_id: $project_id})
 		MERGE (a)-[:BASED_ON]->(r)
 	`, map[string]interface{}{
 		"action_id":         action.ID,
 		"recommendation_id": input.RecommendationID,
+		"project_id":        input.ProjectID,
+		"tenant_id":         input.Meta.TenantID,
 		"user_id":           input.Meta.UserID,
 	}, c.options()); err != nil {
 		return mcp.PlanProposal{}, fmt.Errorf("link plan to recommendation: %w", err)
@@ -179,16 +205,16 @@ func (c *Client) RecordFeedback(ctx context.Context, input mcp.FeedbackInput) (m
 	now := time.Now().UTC()
 	feedbackID := stableID("feedback", input.Meta.UserID+"\x00"+input.RecommendationID+"\x00"+string(input.Kind))
 	result, err := c.user.Query(`
-		MERGE (f:Feedback {id: $id, user_id: $user_id})
-		SET f.tenant_id = $tenant_id, f.recommendation_id = $recommendation_id,
+		MATCH (r:Recommendation {id: $recommendation_id, tenant_id: $tenant_id, user_id: $user_id})
+		MERGE (f:Feedback {id: $id, tenant_id: $tenant_id, user_id: $user_id})
+		SET f.recommendation_id = $recommendation_id, f.project_id = r.project_id,
 		    f.kind = $kind, f.note = $note, f.recorded_at = $recorded_at
-		WITH f
-		MATCH (r:Recommendation {id: $recommendation_id, user_id: $user_id})
+		WITH f, r
 		MERGE (f)-[:ABOUT]->(r)
-		WITH f
-		MATCH (u:User {id: $user_id})
+		WITH f, r
+		MATCH (u:User {id: $user_id, tenant_id: $tenant_id})
 		MERGE (u)-[:GAVE_FEEDBACK]->(f)
-		RETURN f.id AS id
+		RETURN f.id AS id, r.project_id AS project_id
 	`, map[string]interface{}{
 		"id":                feedbackID,
 		"tenant_id":         input.Meta.TenantID,
@@ -204,13 +230,14 @@ func (c *Client) RecordFeedback(ctx context.Context, input mcp.FeedbackInput) (m
 	if err := requireQueryRow(result, "save feedback"); err != nil {
 		return mcp.FeedbackRecord{}, err
 	}
+	projectID := stringValue(recordValue(result.Record(), "project_id"))
 	memoryService := memory.NewService(NewMemoryRepository(c))
 	_, memoryErr := memoryService.Remember(ctx, memory.Memory{
 		ID:        stableID("memory_feedback", feedbackID),
 		TenantID:  input.Meta.TenantID,
 		UserID:    input.Meta.UserID,
 		SessionID: input.Meta.SessionID,
-		ProjectID: "project_nightshift",
+		ProjectID: projectID,
 		Type:      memory.Episodic,
 		Content:   fmt.Sprintf("User marked recommendation %s as %s.", input.RecommendationID, input.Kind),
 		Summary:   input.Note,
@@ -222,6 +249,22 @@ func (c *Client) RecordFeedback(ctx context.Context, input mcp.FeedbackInput) (m
 		return mcp.FeedbackRecord{}, fmt.Errorf("persist feedback memory: %w", memoryErr)
 	}
 	return mcp.FeedbackRecord{ID: feedbackID, RecommendationID: input.RecommendationID, Kind: input.Kind, Note: input.Note, RecordedAt: now}, nil
+}
+
+func (c *Client) validatePlannerContext(ctx context.Context, input mcp.ProposePlanInput) error {
+	result, err := c.user.ROQuery(plannerValidationQuery, map[string]interface{}{
+		"project_id":        input.ProjectID,
+		"recommendation_id": input.RecommendationID,
+		"tenant_id":         input.Meta.TenantID,
+		"user_id":           input.Meta.UserID,
+	}, c.options())
+	if err != nil {
+		return fmt.Errorf("validate planner project and recommendation: %w", err)
+	}
+	if err := requireQueryRow(result, "validate planner context"); err != nil {
+		return fmt.Errorf("planner recommendation %q and project %q are not in the same user scope: %w", input.RecommendationID, input.ProjectID, err)
+	}
+	return nil
 }
 
 func (c *Client) ready(ctx context.Context) error {

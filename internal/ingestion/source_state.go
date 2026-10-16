@@ -19,6 +19,8 @@ const (
 // so a process restart can resume conditional requests.
 type SourceCursor struct {
 	SourceID      string
+	TenantID      string
+	UserID        string
 	ETag          string
 	LastModified  string
 	LastAttemptAt time.Time
@@ -87,17 +89,26 @@ func (r *AdapterRegistry) Resolve(source SourceConfig) (SourceAdapter, error) {
 // client is shared so callers can configure connection pooling and deadlines.
 func NewHTTPAdapterRegistry(client *http.Client, bodyLimit int64, userAgent string) *AdapterRegistry {
 	registry := NewAdapterRegistry()
-	_ = registry.Register("rss", func(source SourceConfig) SourceAdapter {
+	_ = registry.Register(SourceKindRSS, func(source SourceConfig) SourceAdapter {
 		return RSSSource{Source: source, Client: client, BodyLimit: bodyLimit, UserAgent: userAgent}
 	})
-	_ = registry.Register("atom", func(source SourceConfig) SourceAdapter {
+	_ = registry.Register(SourceKindAtom, func(source SourceConfig) SourceAdapter {
 		return RSSSource{Source: source, Client: client, BodyLimit: bodyLimit, UserAgent: userAgent}
 	})
-	_ = registry.Register("github", func(source SourceConfig) SourceAdapter {
+	// "feed" was the original normalized default. Keep it as a compatible
+	// alias while persisted configurations migrate to the explicit rss kind.
+	_ = registry.Register("feed", func(source SourceConfig) SourceAdapter {
+		return RSSSource{Source: source, Client: client, BodyLimit: bodyLimit, UserAgent: userAgent}
+	})
+	_ = registry.Register(SourceKindGitHub, func(source SourceConfig) SourceAdapter {
 		return GitHubReleaseSource{Source: source, Client: client, BodyLimit: bodyLimit, UserAgent: userAgent}
 	})
-	_ = registry.Register("github_release", func(source SourceConfig) SourceAdapter {
+	_ = registry.Register(SourceKindGitHubRelease, func(source SourceConfig) SourceAdapter {
 		return GitHubReleaseSource{Source: source, Client: client, BodyLimit: bodyLimit, UserAgent: userAgent}
+	})
+	_ = registry.Register(SourceKindFixture, func(source SourceConfig) SourceAdapter {
+		fixture := DefaultFixtureSource()
+		return NewFixtureSource(source, fixture.items)
 	})
 	return registry
 }
@@ -112,6 +123,8 @@ const (
 
 type SourceRun struct {
 	ID              string
+	TenantID        string
+	UserID          string
 	SourceID        string
 	StartedAt       time.Time
 	FinishedAt      time.Time
@@ -133,4 +146,10 @@ type SourceRepository interface {
 	SaveSourceCursor(context.Context, SourceCursor) error
 	BeginSourceRun(context.Context, SourceRun) error
 	CompleteSourceRun(context.Context, SourceRun) error
+}
+
+// StaleRunRecovery is optional for repositories that support crash recovery;
+// collectors and lightweight fakes do not need to implement it to collect.
+type StaleRunRecovery interface {
+	RecoverStaleRuns(context.Context, string, string, time.Time) (int, error)
 }

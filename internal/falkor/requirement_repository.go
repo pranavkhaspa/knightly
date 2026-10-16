@@ -123,8 +123,8 @@ func requirementParams(value requirement.Requirement) map[string]interface{} {
 		"priority":       value.Priority,
 		"technology_ids": value.TechnologyIDs,
 		"constraints":    value.Constraints,
-		"created_at":     value.CreatedAt.UnixMilli(),
-		"updated_at":     value.UpdatedAt.UnixMilli(),
+		"created_at":     optionalMillis(value.CreatedAt),
+		"updated_at":     optionalMillis(value.UpdatedAt),
 	}
 }
 

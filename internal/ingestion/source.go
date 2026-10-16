@@ -64,8 +64,10 @@ func (s *FixtureSource) FetchWithCursor(ctx context.Context, cursor SourceCursor
 func DefaultFixtureSource() *FixtureSource {
 	return NewFixtureSource(SourceConfig{
 		ID:         "source_fixture_nightshift",
+		TenantID:   "tenant_demo",
+		UserID:     "user_demo",
 		Name:       "NightShift deterministic fixture",
-		Kind:       "fixture",
+		Kind:       SourceKindFixture,
 		URL:        "https://example.invalid/nightshift/feed",
 		Enabled:    true,
 		TrustScore: 1,

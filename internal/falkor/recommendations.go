@@ -18,7 +18,16 @@ MATCH path = (project:Project {id: $project_id})
   <-[:MENTIONS]-(item:Item)
   -[:FROM]->(source:Source)
 WHERE item.id = $item_id
-RETURN project.id AS project_id,
+  AND requirement.tenant_id = project.tenant_id
+  AND requirement.user_id = project.user_id
+  AND technology.tenant_id = project.tenant_id
+  AND technology.user_id = project.user_id
+  AND item.tenant_id = project.tenant_id
+  AND item.user_id = project.user_id
+  AND source.tenant_id = project.tenant_id
+  AND source.user_id = project.user_id
+RETURN project.tenant_id AS tenant_id,
+       project.id AS project_id,
        project.name AS project_name,
        requirement.id AS requirement_id,
        requirement.title AS requirement_name,
@@ -34,8 +43,14 @@ LIMIT 1
 `
 
 const RecommendationUpsertQuery = `
-MERGE (recommendation:Recommendation {id: $recommendation_id})
-SET recommendation.user_id = $user_id,
+MATCH (project:Project {id: $project_id, tenant_id: $tenant_id, user_id: $user_id})
+MATCH (project)-[:HAS_REQUIREMENT]->(requirement:Requirement {id: $requirement_id, tenant_id: $tenant_id, user_id: $user_id})
+MATCH (item:Item {id: $item_id, tenant_id: $tenant_id, user_id: $user_id})
+MATCH (item)-[:FROM]->(source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
+WITH project, item, requirement
+MERGE (recommendation:Recommendation {id: $recommendation_id, tenant_id: $tenant_id, user_id: $user_id})
+SET recommendation.tenant_id = $tenant_id,
+    recommendation.user_id = $user_id,
     recommendation.project_id = $project_id,
     recommendation.item_id = $item_id,
     recommendation.title = $title,
@@ -46,15 +61,14 @@ SET recommendation.user_id = $user_id,
     recommendation.query_name = $query_name,
     recommendation.path_readable = $path_readable,
     recommendation.created_at = $created_at,
-    recommendation.updated_at = timestamp()
-MERGE (user:User {id: $user_id})
+    recommendation.updated_at = $updated_at
+MERGE (user:User {id: $user_id, tenant_id: $tenant_id})
 MERGE (recommendation)-[:FOR]->(user)
-MERGE (item:Item {id: $item_id})
 MERGE (recommendation)-[:ABOUT]->(item)
-MERGE (requirement:Requirement {id: $requirement_id})
 MERGE (recommendation)-[:MATCHES]->(requirement)
-MERGE (evidence:Evidence {id: $evidence_id})
+MERGE (evidence:Evidence {id: $evidence_id, tenant_id: $tenant_id, user_id: $user_id})
 SET evidence.source_id = $source_id,
+	 evidence.tenant_id = $tenant_id,
 	 evidence.user_id = $user_id,
 	 evidence.item_id = $item_id,
     evidence.url = $evidence_url,
@@ -62,9 +76,10 @@ SET evidence.source_id = $source_id,
     evidence.evidence_kind = $evidence_kind,
     evidence.content_hash = $evidence_content_hash,
     evidence.observed_at = $evidence_observed_at,
-    evidence.updated_at = timestamp()
+    evidence.updated_at = $updated_at
 MERGE (recommendation)-[:SUPPORTED_BY]->(evidence)
 MERGE (evidence)-[:SUPPORTS]->(item)
+RETURN recommendation.id AS id
 `
 
 var _ recommendation.GraphRepository = (*Client)(nil)
@@ -100,6 +115,7 @@ func (c *Client) FindRecommendationPath(ctx context.Context, projectID, itemID s
 		return recommendation.EvidencePath{}, fmt.Errorf("parse recommendation path: %w", err)
 	}
 	path := recommendation.EvidencePath{
+		TenantID:      stringValue(recordValue(record, "tenant_id")),
 		ProjectID:     stringValue(recordValue(record, "project_id")),
 		RequirementID: stringValue(recordValue(record, "requirement_id")),
 		TechnologyID:  stringValue(recordValue(record, "technology_id")),
@@ -120,8 +136,13 @@ func (c *Client) SaveRecommendation(ctx context.Context, value recommendation.Re
 	if c == nil || c.user == nil {
 		return errors.New("FalkorDB user graph is not configured")
 	}
-	if strings.TrimSpace(value.UserID) == "" || strings.TrimSpace(value.ProjectID) == "" || strings.TrimSpace(value.ItemID) == "" || !value.Path.ValidFor(value.ProjectID, value.ItemID) {
+	if strings.TrimSpace(value.ID) == "" || strings.TrimSpace(value.TenantID) == "" || strings.TrimSpace(value.UserID) == "" || strings.TrimSpace(value.ProjectID) == "" || strings.TrimSpace(value.ItemID) == "" || !value.Path.ValidFor(value.ProjectID, value.ItemID) {
 		return errors.New("recommendation requires a complete FalkorDB evidence path")
+	}
+	if (value.Path.TenantID != "" && value.Path.TenantID != value.TenantID) ||
+		(value.Evidence.TenantID != "" && value.Evidence.TenantID != value.TenantID) ||
+		(value.Evidence.UserID != "" && value.Evidence.UserID != value.UserID) {
+		return errors.New("recommendation evidence is outside the recommendation scope")
 	}
 	createdAt := value.CreatedAt
 	if createdAt.IsZero() {
@@ -131,8 +152,9 @@ func (c *Client) SaveRecommendation(ctx context.Context, value recommendation.Re
 	if observedAt.IsZero() {
 		observedAt = createdAt
 	}
-	_, err := c.user.Query(RecommendationUpsertQuery, map[string]interface{}{
+	result, err := c.user.Query(RecommendationUpsertQuery, map[string]interface{}{
 		"recommendation_id":     value.ID,
+		"tenant_id":             value.TenantID,
 		"user_id":               value.UserID,
 		"project_id":            value.ProjectID,
 		"item_id":               value.ItemID,
@@ -143,7 +165,7 @@ func (c *Client) SaveRecommendation(ctx context.Context, value recommendation.Re
 		"ranking_version":       value.RankingVersion,
 		"query_name":            value.QueryName,
 		"path_readable":         value.Path.Readable(),
-		"created_at":            createdAt.Unix(),
+		"created_at":            createdAt.UnixMilli(),
 		"requirement_id":        value.Path.RequirementID,
 		"evidence_id":           value.Evidence.ID,
 		"source_id":             value.Evidence.SourceID,
@@ -151,10 +173,14 @@ func (c *Client) SaveRecommendation(ctx context.Context, value recommendation.Re
 		"evidence_excerpt":      value.Evidence.Excerpt,
 		"evidence_kind":         value.Evidence.Kind,
 		"evidence_content_hash": value.Evidence.ContentHash,
-		"evidence_observed_at":  observedAt.Unix(),
+		"evidence_observed_at":  optionalMillis(observedAt),
+		"updated_at":            time.Now().UTC().UnixMilli(),
 	}, c.options())
 	if err != nil {
 		return fmt.Errorf("save recommendation %q: %w", value.ID, err)
+	}
+	if err := requireQueryRow(result, "save recommendation"); err != nil {
+		return err
 	}
 	return nil
 }

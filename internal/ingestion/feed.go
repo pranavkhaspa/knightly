@@ -12,6 +12,12 @@ import (
 )
 
 const (
+	SourceKindFixture       = "fixture"
+	SourceKindRSS           = "rss"
+	SourceKindAtom          = "atom"
+	SourceKindGitHub        = "github"
+	SourceKindGitHubRelease = "github_release"
+
 	defaultMaxItems       = 50
 	defaultMaxTitleBytes  = 512
 	defaultMaxSummarySize = 8192
@@ -74,6 +80,8 @@ func (l Limits) bounded() Limits {
 // The ID is stable across runs and is written to FalkorDB with every item.
 type SourceConfig struct {
 	ID              string
+	TenantID        string
+	UserID          string
 	Name            string
 	Kind            string
 	URL             string
@@ -101,6 +109,8 @@ type RawItem struct {
 // Item is the bounded, canonical representation persisted in FalkorDB.
 type Item struct {
 	ID           string
+	TenantID     string
+	UserID       string
 	SourceID     string
 	CanonicalURL string
 	Title        string
@@ -138,7 +148,7 @@ func (n Normalizer) NormalizeSource(source SourceConfig) (SourceConfig, error) {
 	source.Name = normalizeText(source.Name)
 	source.Kind = normalizeText(source.Kind)
 	if source.Kind == "" {
-		source.Kind = "feed"
+		source.Kind = SourceKindRSS
 	}
 	if source.PollInterval <= 0 {
 		source.PollInterval = DefaultSourcePollInterval
@@ -205,6 +215,8 @@ func (n Normalizer) Normalize(source SourceConfig, raw []RawItem, fetchedAt time
 
 		items = append(items, Item{
 			ID:           StableID("item", canonicalURL),
+			TenantID:     source.TenantID,
+			UserID:       source.UserID,
 			SourceID:     source.ID,
 			CanonicalURL: canonicalURL,
 			Title:        title,

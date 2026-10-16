@@ -30,3 +30,19 @@ func TestFixtureSourceIsDeterministicAndBounded(t *testing.T) {
 		t.Fatal("fixture source exposed mutable internal data")
 	}
 }
+
+func TestPersistedSourceKindsResolveIncludingFixture(t *testing.T) {
+	registry := NewHTTPAdapterRegistry(nil, 0, "test-agent")
+	for _, kind := range []string{SourceKindRSS, SourceKindAtom, SourceKindGitHub, SourceKindGitHubRelease, SourceKindFixture, "feed"} {
+		adapter, err := registry.Resolve(SourceConfig{ID: "source_" + kind, Kind: kind, Name: "source", URL: "https://example.invalid/feed"})
+		if err != nil {
+			t.Fatalf("resolve %q: %v", kind, err)
+		}
+		if adapter == nil {
+			t.Fatalf("resolve %q returned nil adapter", kind)
+		}
+	}
+	if DefaultFixtureSource().Config().Kind != SourceKindFixture {
+		t.Fatalf("default fixture kind = %q, want %q", DefaultFixtureSource().Config().Kind, SourceKindFixture)
+	}
+}

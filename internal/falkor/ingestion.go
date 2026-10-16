@@ -12,7 +12,7 @@ import (
 
 const (
 	SourceUpsertQuery = `
-MERGE (source:Source {id: $source_id})
+MERGE (source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
 SET source.name = $name,
     source.kind = $kind,
     source.url = $url,
@@ -22,11 +22,11 @@ SET source.name = $name,
     source.max_items = $max_items,
     source.technology_hints = $technology_hints,
     source.interest_hints = $interest_hints,
-    source.updated_at = timestamp()
+    source.updated_at = $updated_at
 `
 
 	ItemUpsertQuery = `
-MERGE (item:Item {id: $item_id})
+MERGE (item:Item {id: $item_id, tenant_id: $tenant_id, user_id: $user_id})
 SET item.source_id = $source_id,
     item.canonical_url = $canonical_url,
     item.title = $title,
@@ -34,23 +34,23 @@ SET item.source_id = $source_id,
     item.published_at = $published_at,
     item.content_hash = $content_hash,
     item.fetched_at = $fetched_at,
-    item.updated_at = timestamp()
+    item.updated_at = $updated_at
 WITH item
-MATCH (source:Source {id: $source_id})
+MATCH (source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
 MERGE (item)-[:FROM]->(source)
 `
 
 	TechnologyLinkQuery = `
-MATCH (item:Item {id: $item_id})
-MERGE (technology:Technology {id: $technology_id})
+MATCH (item:Item {id: $item_id, tenant_id: $tenant_id, user_id: $user_id})
+MERGE (technology:Technology {id: $technology_id, tenant_id: $tenant_id, user_id: $user_id})
 SET technology.name = $name,
     technology.normalized_name = $name
 MERGE (item)-[:MENTIONS]->(technology)
 `
 
 	InterestLinkQuery = `
-MATCH (item:Item {id: $item_id})
-MERGE (interest:Interest {id: $interest_id})
+MATCH (item:Item {id: $item_id, tenant_id: $tenant_id, user_id: $user_id})
+MERGE (interest:Interest {id: $interest_id, tenant_id: $tenant_id, user_id: $user_id})
 SET interest.name = $name,
     interest.normalized_name = $name
 MERGE (item)-[:ABOUT]->(interest)
@@ -73,6 +73,9 @@ func (c *Client) UpsertSource(ctx context.Context, source ingestion.SourceConfig
 		return fmt.Errorf("normalize source %q: %w", source.ID, err)
 	}
 	source = normalized
+	if strings.TrimSpace(source.TenantID) == "" || strings.TrimSpace(source.UserID) == "" {
+		return errors.New("source tenant ID and user ID are required")
+	}
 	pollIntervalSeconds := int64(source.PollInterval / time.Second)
 	if pollIntervalSeconds <= 0 {
 		pollIntervalSeconds = int64(ingestion.DefaultSourcePollInterval / time.Second)
@@ -86,6 +89,8 @@ func (c *Client) UpsertSource(ctx context.Context, source ingestion.SourceConfig
 	}
 	_, err = c.user.Query(SourceUpsertQuery, map[string]interface{}{
 		"source_id":             source.ID,
+		"tenant_id":             source.TenantID,
+		"user_id":               source.UserID,
 		"name":                  source.Name,
 		"kind":                  source.Kind,
 		"url":                   source.URL,
@@ -95,6 +100,7 @@ func (c *Client) UpsertSource(ctx context.Context, source ingestion.SourceConfig
 		"max_items":             maxItems,
 		"technology_hints":      source.TechnologyHints,
 		"interest_hints":        source.InterestHints,
+		"updated_at":            time.Now().UTC().UnixMilli(),
 	}, c.options())
 	if err != nil {
 		return fmt.Errorf("upsert source %q: %w", source.ID, err)
@@ -109,19 +115,22 @@ func (c *Client) UpsertItem(ctx context.Context, item ingestion.Item) error {
 	if c == nil || c.user == nil {
 		return errors.New("FalkorDB user graph is not configured")
 	}
-	if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.SourceID) == "" || strings.TrimSpace(item.CanonicalURL) == "" || strings.TrimSpace(item.Title) == "" {
-		return errors.New("item ID, source ID, canonical URL, and title are required")
+	if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.TenantID) == "" || strings.TrimSpace(item.UserID) == "" || strings.TrimSpace(item.SourceID) == "" || strings.TrimSpace(item.CanonicalURL) == "" || strings.TrimSpace(item.Title) == "" {
+		return errors.New("item tenant ID, user ID, ID, source ID, canonical URL, and title are required")
 	}
 
 	_, err := c.user.Query(ItemUpsertQuery, map[string]interface{}{
 		"item_id":       item.ID,
+		"tenant_id":     item.TenantID,
+		"user_id":       item.UserID,
 		"source_id":     item.SourceID,
 		"canonical_url": item.CanonicalURL,
 		"title":         item.Title,
 		"summary":       item.Summary,
-		"published_at":  optionalUnix(item.PublishedAt),
+		"published_at":  optionalMillis(item.PublishedAt),
 		"content_hash":  item.ContentHash,
-		"fetched_at":    item.FetchedAt.Unix(),
+		"fetched_at":    optionalMillis(item.FetchedAt),
+		"updated_at":    time.Now().UTC().UnixMilli(),
 	}, c.options())
 	if err != nil {
 		return fmt.Errorf("upsert item %q: %w", item.ID, err)
@@ -133,6 +142,8 @@ func (c *Client) UpsertItem(ctx context.Context, item ingestion.Item) error {
 		}
 		if _, err := c.user.Query(TechnologyLinkQuery, map[string]interface{}{
 			"item_id":       item.ID,
+			"tenant_id":     item.TenantID,
+			"user_id":       item.UserID,
 			"technology_id": graphTermID("technology", technology),
 			"name":          technology,
 		}, c.options()); err != nil {
@@ -145,6 +156,8 @@ func (c *Client) UpsertItem(ctx context.Context, item ingestion.Item) error {
 		}
 		if _, err := c.user.Query(InterestLinkQuery, map[string]interface{}{
 			"item_id":     item.ID,
+			"tenant_id":   item.TenantID,
+			"user_id":     item.UserID,
 			"interest_id": graphTermID("interest", interest),
 			"name":        interest,
 		}, c.options()); err != nil {
@@ -152,13 +165,6 @@ func (c *Client) UpsertItem(ctx context.Context, item ingestion.Item) error {
 		}
 	}
 	return nil
-}
-
-func optionalUnix(value time.Time) interface{} {
-	if value.IsZero() {
-		return nil
-	}
-	return value.Unix()
 }
 
 func graphTermID(prefix, value string) string {

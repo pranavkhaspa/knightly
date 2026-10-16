@@ -22,6 +22,9 @@ func NewMemoryRepository(client *Client) *MemoryRepository {
 }
 
 func (r *MemoryRepository) Save(ctx context.Context, item memory.Memory) error {
+	if strings.TrimSpace(item.TenantID) == "" || strings.TrimSpace(item.UserID) == "" {
+		return fmt.Errorf("memory tenant and user IDs are required")
+	}
 	if item.SupersedesID != "" {
 		return r.Supersede(ctx, item.SupersedesID, item)
 	}
@@ -29,7 +32,7 @@ func (r *MemoryRepository) Save(ctx context.Context, item memory.Memory) error {
 		return err
 	}
 	result, err := r.client.user.Query(`
-		MERGE (m:Memory {id: $id, user_id: $user_id})
+		MERGE (m:Memory {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 		ON CREATE SET m.created_at = $created_at
 		SET m.tenant_id = $tenant_id,
 		    m.session_id = $session_id,
@@ -56,14 +59,17 @@ func (r *MemoryRepository) Supersede(ctx context.Context, previousID string, rep
 	if strings.TrimSpace(previousID) == "" {
 		return fmt.Errorf("previous memory ID is required")
 	}
+	if strings.TrimSpace(replacement.TenantID) == "" || strings.TrimSpace(replacement.UserID) == "" {
+		return fmt.Errorf("memory tenant and user IDs are required")
+	}
 	if err := r.ready(ctx); err != nil {
 		return err
 	}
 	params := memoryParams(replacement)
 	params["previous_id"] = previousID
 	result, err := r.client.user.Query(`
-		MATCH (previous:Memory {id: $previous_id, user_id: $user_id})
-		MERGE (m:Memory {id: $id, user_id: $user_id})
+		MATCH (previous:Memory {id: $previous_id, tenant_id: $tenant_id, user_id: $user_id})
+		MERGE (m:Memory {id: $id, tenant_id: $tenant_id, user_id: $user_id})
 		ON CREATE SET m.created_at = $created_at
 		SET m.tenant_id = $tenant_id,
 		    m.session_id = $session_id,
@@ -93,7 +99,9 @@ func (r *MemoryRepository) Get(ctx context.Context, userID, id string) (memory.M
 		return memory.Memory{}, err
 	}
 	result, err := r.client.user.ROQuery(`
+		MATCH (u:User {id: $user_id})
 		MATCH (m:Memory {id: $id, user_id: $user_id})
+		WHERE m.tenant_id = u.tenant_id
 		RETURN m.id AS id, m.tenant_id AS tenant_id, m.user_id AS user_id,
 		       m.session_id AS session_id, m.task_id AS task_id,
 		       m.project_id AS project_id, m.memory_type AS memory_type,
@@ -177,12 +185,13 @@ func (r *MemoryRepository) saveEvidenceLinks(ctx context.Context, item memory.Me
 	}
 	_, err := r.client.user.Query(`
 		UNWIND $evidence_ids AS evidence_id
-		MATCH (m:Memory {id: $id, user_id: $user_id})
-		MATCH (e:Evidence {id: evidence_id, user_id: $user_id})
+		MATCH (m:Memory {id: $id, tenant_id: $tenant_id, user_id: $user_id})
+		MATCH (e:Evidence {id: evidence_id, tenant_id: $tenant_id, user_id: $user_id})
 		MERGE (m)-[:DERIVED_FROM]->(e)
 	`, map[string]interface{}{
 		"evidence_ids": item.EvidenceIDs,
 		"id":           item.ID,
+		"tenant_id":    item.TenantID,
 		"user_id":      item.UserID,
 	}, r.client.options())
 	if err != nil {
@@ -214,8 +223,8 @@ func memoryParams(item memory.Memory) map[string]interface{} {
 		"summary":       item.Summary,
 		"evidence_ids":  item.EvidenceIDs,
 		"metadata_json": jsonMap(item.Metadata),
-		"created_at":    item.CreatedAt.UnixMilli(),
-		"updated_at":    item.UpdatedAt.UnixMilli(),
+		"created_at":    optionalMillis(item.CreatedAt),
+		"updated_at":    optionalMillis(item.UpdatedAt),
 	}
 }
 

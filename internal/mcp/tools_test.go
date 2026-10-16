@@ -46,7 +46,7 @@ func TestRetrieveMemoryIsTypedAndRecordsToolCall(t *testing.T) {
 	})
 
 	output, err := server.Invoke(context.Background(), RetrieveMemory, MemoryRetrieveInput{
-		Meta:      RequestMeta{CallID: "call_1", RequestID: "request_1", UserID: "u1", SessionID: "session_1"},
+		Meta:      RequestMeta{CallID: "call_1", RequestID: "request_1", TenantID: "tenant_1", UserID: "u1", SessionID: "session_1"},
 		ProjectID: "project_1",
 		Types:     []memory.Type{memory.Semantic},
 		Limit:     5,

@@ -88,6 +88,7 @@ func (s *Service) Recommend(ctx context.Context, userID, projectID string, candi
 
 		recommendation := Recommendation{
 			ID:             stableRecommendationID(projectID, candidate.ItemID),
+			TenantID:       path.TenantID,
 			UserID:         userID,
 			ProjectID:      projectID,
 			ItemID:         candidate.ItemID,
@@ -101,6 +102,8 @@ func (s *Service) Recommend(ctx context.Context, userID, projectID string, candi
 			Path:           path,
 			Evidence: Evidence{
 				ID:          stableEvidenceID(candidate.ItemID),
+				TenantID:    path.TenantID,
+				UserID:      userID,
 				SourceID:    path.SourceID,
 				ItemID:      candidate.ItemID,
 				URL:         firstNonEmpty(candidate.URL, path.SourceURL()),
