@@ -39,6 +39,10 @@ func (s RSSSource) Fetch(ctx context.Context, maxItems int) ([]RawItem, error) {
 }
 
 func (s RSSSource) FetchWithCursor(ctx context.Context, cursor SourceCursor, maxItems int) (FetchResult, error) {
+	maxItems = boundedFetchLimit(maxItems)
+	if maxItems == 0 {
+		return FetchResult{Cursor: cursor}, nil
+	}
 	body, nextCursor, notModified, err := s.fetch(ctx, cursor, []string{"application/rss+xml", "application/atom+xml", "application/xml", "text/xml"})
 	if err != nil {
 		return FetchResult{}, err
@@ -165,6 +169,10 @@ func (s GitHubReleaseSource) Fetch(ctx context.Context, maxItems int) ([]RawItem
 }
 
 func (s GitHubReleaseSource) FetchWithCursor(ctx context.Context, cursor SourceCursor, maxItems int) (FetchResult, error) {
+	maxItems = boundedFetchLimit(maxItems)
+	if maxItems == 0 {
+		return FetchResult{Cursor: cursor}, nil
+	}
 	rss := RSSSource{Source: s.Source, Client: s.Client, BodyLimit: s.BodyLimit, UserAgent: s.UserAgent}
 	body, nextCursor, notModified, err := rss.fetch(ctx, cursor, []string{"application/json", "application/vnd.github+json"})
 	if err != nil {
@@ -176,9 +184,6 @@ func (s GitHubReleaseSource) FetchWithCursor(ctx context.Context, cursor SourceC
 	var releases []githubRelease
 	if err := json.Unmarshal(body, &releases); err != nil {
 		return FetchResult{}, fmt.Errorf("decode GitHub releases: %w", err)
-	}
-	if maxItems < 0 {
-		maxItems = 0
 	}
 	if maxItems > len(releases) {
 		maxItems = len(releases)
@@ -200,6 +205,16 @@ func (s GitHubReleaseSource) FetchWithCursor(ctx context.Context, cursor SourceC
 		})
 	}
 	return FetchResult{Items: items, Cursor: nextCursor}, nil
+}
+
+func boundedFetchLimit(maxItems int) int {
+	if maxItems <= 0 {
+		return 0
+	}
+	if maxItems > hardMaxItems {
+		return hardMaxItems
+	}
+	return maxItems
 }
 
 type xmlFeed struct {

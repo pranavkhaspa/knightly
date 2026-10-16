@@ -179,3 +179,52 @@ func TestExecuteHonorsGlobalDisable(t *testing.T) {
 		t.Fatalf("disabled execute error = %v, want ErrActionsDisabled", err)
 	}
 }
+
+func TestFailedActionPersistsForExplicitlyApprovedRecovery(t *testing.T) {
+	repository := newFakeRepository()
+	service := NewService(repository, true)
+	service.now = func() time.Time { return time.Date(2026, 10, 16, 13, 0, 0, 0, time.UTC) }
+	if _, err := service.Propose(context.Background(), baseAction()); err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	if _, err := service.Approve(context.Background(), "user_demo", "action_issue_1", Approval{ID: "approval_1", ApprovedBy: "user_demo"}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	providerFailure := errors.New("provider connection reset after accepting request")
+	_, err := service.Execute(context.Background(), "user_demo", "action_issue_1", failingExecutor{err: providerFailure})
+	if !errors.Is(err, providerFailure) {
+		t.Fatalf("failed execution error = %v, want provider failure", err)
+	}
+	failed, err := repository.Get(context.Background(), "user_demo", "action_issue_1")
+	if err != nil {
+		t.Fatalf("read failed action: %v", err)
+	}
+	if failed.Status != Failed || failed.Error != providerFailure.Error() {
+		t.Fatalf("failed action = %#v, want persisted failure", failed)
+	}
+
+	if _, err := service.Execute(context.Background(), "user_demo", "action_issue_1", &fakeExecutor{}); !errors.Is(err, ErrApprovalRequired) {
+		t.Fatalf("retry without approval error = %v, want ErrApprovalRequired", err)
+	}
+	approved, err := service.Approve(context.Background(), "user_demo", "action_issue_1", Approval{ID: "approval_2", ApprovedBy: "user_demo", Note: "Retry after provider recovery"})
+	if err != nil || approved.Status != Approved || approved.ApprovalID != "approval_2" {
+		t.Fatalf("reapproval = %#v, err %v", approved, err)
+	}
+
+	recovered, err := service.Execute(context.Background(), "user_demo", "action_issue_1", &fakeExecutor{})
+	if err != nil {
+		t.Fatalf("recovered execution: %v", err)
+	}
+	if recovered.Status != Completed || recovered.ResultReference != "issue-42" || recovered.Error != "" {
+		t.Fatalf("recovered action = %#v", recovered)
+	}
+}
+
+type failingExecutor struct {
+	err error
+}
+
+func (e failingExecutor) Execute(context.Context, Action) (ExecutionResult, error) {
+	return ExecutionResult{}, e.err
+}

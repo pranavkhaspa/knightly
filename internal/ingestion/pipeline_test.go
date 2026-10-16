@@ -2,6 +2,7 @@ package ingestion
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -40,4 +41,47 @@ func TestPipelineWritesNormalizedFixtureToGraphWriter(t *testing.T) {
 	if writer.items[0].SourceID != writer.sources[0].ID {
 		t.Fatalf("item source ID %q does not match source %q", writer.items[0].SourceID, writer.sources[0].ID)
 	}
+}
+
+func TestPipelineRecoversAfterBoundedSourceFailure(t *testing.T) {
+	writer := &fakeGraphWriter{}
+	pipeline := NewPipeline(writer)
+	temporary := errors.New("source timed out")
+	source := failingSource{
+		config: SourceConfig{
+			ID:      "source_timeout",
+			Name:    "Temporary source",
+			Kind:    "feed",
+			URL:     "https://example.com/feed",
+			Enabled: true,
+		},
+		err: temporary,
+	}
+
+	result, err := pipeline.Run(context.Background(), source)
+	if !errors.Is(err, temporary) {
+		t.Fatalf("failed source error = %v, want wrapped timeout", err)
+	}
+	if result.Source.ID != source.config.ID || len(writer.sources) != 0 || len(writer.items) != 0 {
+		t.Fatalf("failed source wrote partial state: result=%+v sources=%d items=%d", result, len(writer.sources), len(writer.items))
+	}
+
+	recovered, err := pipeline.Run(context.Background(), DefaultFixtureSource())
+	if err != nil {
+		t.Fatalf("run after source failure: %v", err)
+	}
+	if recovered.Normalized != 2 || len(writer.sources) != 1 || len(writer.items) != 2 {
+		t.Fatalf("pipeline did not recover: result=%+v sources=%d items=%d", recovered, len(writer.sources), len(writer.items))
+	}
+}
+
+type failingSource struct {
+	config SourceConfig
+	err    error
+}
+
+func (s failingSource) Config() SourceConfig { return s.config }
+
+func (s failingSource) Fetch(context.Context, int) ([]RawItem, error) {
+	return nil, s.err
 }

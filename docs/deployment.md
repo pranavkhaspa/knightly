@@ -31,6 +31,18 @@ make graph-up
 curl -fsS http://127.0.0.1:8080/health/ready
 ```
 
+The two health endpoints have different meanings:
+
+```bash
+curl --fail --silent --show-error http://127.0.0.1:8080/health/live >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8080/health/ready
+```
+
+`/health/live` is process liveness and does not contact FalkorDB. `/health/ready`
+performs a bounded graph probe and returns `503` with the graph error when the
+dependency is unavailable. Use liveness for restart supervision and readiness
+for traffic routing or deployment verification.
+
 ## Old Linux PC or small ARM device
 
 1. Run the native binary as an unprivileged user.
@@ -122,3 +134,23 @@ curl -fsS http://127.0.0.1:8080/api/v1/dashboard
 `/health/live` does not require FalkorDB. `/health/ready` and the dashboard
 report graph connectivity separately, which makes remote-graph outages
 visible without causing the process supervisor to restart a healthy daemon.
+
+## Evidence and measurement boundary
+
+The repository's correctness evidence is repeatable:
+
+```bash
+make concurrency-evidence
+FALKORDB_INTEGRATION=1 FALKORDB_URL=redis://127.0.0.1:6379 make integration-test
+```
+
+The first command exercises 32 concurrent callers for the same coordination
+key 100 times under the race detector. The second command requires a live
+FalkorDB and verifies graph persistence, evidence paths, action idempotency,
+and graph-backed concurrent completion. The integration command is intentionally
+opt-in and never runs against a mock while making a live-graph claim.
+
+No memory, CPU, startup, dashboard-latency, or target-board support figure is
+reported as measured by this repository. The resource values in `PRD.md` and
+`ps.md` are targets until a documented workload is run on the claimed hardware
+and the results are captured.

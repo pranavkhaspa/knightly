@@ -34,7 +34,8 @@ relationships that make those behaviors possible.
 - One named control graph plus isolated named user graphs.
 - Localhost-only HTTP default.
 - External actions disabled by configuration and rejected by validation.
-- Health endpoints work even while FalkorDB is unavailable.
+- `/health/live` stays available while FalkorDB is unavailable; `/health/ready`
+  returns a diagnostic `503` until graph connectivity is healthy.
 - A framework-free dashboard shows the active graph path and persisted task
   status when FalkorDB is available.
 - Deterministic mode is the baseline; an LLM is optional and not yet wired.
@@ -143,14 +144,43 @@ go vet ./...
 go build -trimpath -o bin/nightshift ./cmd/nightshift
 ```
 
-The FalkorDB integration check is separate from the unit suite because it
-needs a live database:
+The health checks and repeatable concurrency evidence are separate commands:
+
+```bash
+make health-check
+make concurrency-evidence
+```
+
+`health-check` intentionally fails on `/health/ready` when the graph is down;
+that is the signal a deployment supervisor should use for dependency-aware
+readiness. The FalkorDB integration suite is also separate from the unit suite
+because it needs a live database, and it is disabled unless explicitly opted
+into:
 
 ```bash
 make graph-up
-go run ./cmd/nightshift
-curl -fsS http://127.0.0.1:8080/health/ready
+FALKORDB_INTEGRATION=1 make integration-test
 ```
+
+The integration suite uses unique temporary graph names, verifies graph-backed
+ingestion/evidence, action idempotency, and concurrent lease completion, then
+deletes those graphs. Set `FALKORDB_URL` when FalkorDB is remote.
+
+## Evidence boundary
+
+The automated checks provide pass/fail evidence for bounded source failures,
+failure recovery, approval-gated action retries, graph evidence persistence,
+and exactly-once lease behavior. `make concurrency-evidence` repeats the
+32-caller in-memory coordination harness 100 times with the race detector.
+The opt-in integration command is the evidence path for a live FalkorDB rather
+than a mock.
+
+No performance number is claimed here for memory, CPU, startup time, dashboard
+latency, or a particular ARM/old-PC class. Those PRD targets remain unmeasured
+until the repeatable workload is run on the target hardware and its output is
+recorded. The current daemon also has no scheduled worker loop yet; the
+boundedness evidence covers the implemented HTTP, source, graph, action, and
+coordination paths.
 
 ## Portable deployment
 
@@ -164,9 +194,9 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/nightshift-linu
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/nightshift-linux-amd64 ./cmd/nightshift
 ```
 
-The edge process is designed to run with one worker, bounded requests, and no
-local model. FalkorDB can remain remote when the device does not have enough
-memory for the graph server.
+The current edge process uses bounded HTTP and graph requests and no local
+model. Its scheduled worker loop is not implemented yet. FalkorDB can remain
+remote when the device does not have enough memory for the graph server.
 
 ### VPS
 

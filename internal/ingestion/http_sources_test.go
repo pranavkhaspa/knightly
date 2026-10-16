@@ -2,8 +2,10 @@ package ingestion
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -84,7 +86,77 @@ func TestRSSSourceRejectsUnsupportedContentType(t *testing.T) {
 	defer server.Close()
 
 	_, err := (RSSSource{Source: SourceConfig{URL: server.URL}}).Fetch(context.Background(), 1)
-	if err == nil {
-		t.Fatal("Fetch() error = nil, want unsupported content type error")
+	if err == nil || !strings.Contains(err.Error(), "unsupported source content type") {
+		t.Fatalf("Fetch() error = %v, want unsupported content type error", err)
+	}
+}
+
+func TestRSSSourceBoundsItemLimitAndRejectsOversizedBodies(t *testing.T) {
+	called := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.Header().Set("Content-Type", "application/atom+xml")
+		_, _ = w.Write([]byte(`<feed><entry><id>one</id><title>Bounded</title><link href="https://example.com/bounded"/></entry></feed>`))
+	}))
+	defer server.Close()
+
+	source := RSSSource{Source: SourceConfig{URL: server.URL}}
+	items, err := source.Fetch(context.Background(), 1<<30)
+	if err != nil {
+		t.Fatalf("Fetch() with oversized limit error = %v", err)
+	}
+	if len(items) != 1 || called != 1 {
+		t.Fatalf("oversized limit returned %d items after %d requests; want one item and one request", len(items), called)
+	}
+	items, err = source.Fetch(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Fetch() with zero limit error = %v", err)
+	}
+	if len(items) != 0 || called != 1 {
+		t.Fatalf("zero limit returned %d items after %d requests; want no items and no request", len(items), called)
+	}
+}
+
+func TestRSSSourceReturnsBoundedFailureForBadStatusMalformedFeedAndBody(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		bodyLimit int64
+		content   string
+		want      string
+	}{
+		{name: "http status", status: http.StatusBadGateway, body: "upstream unavailable", content: "application/rss+xml", want: "source returned HTTP 502"},
+		{name: "malformed feed", status: http.StatusOK, body: "not xml", content: "application/rss+xml", want: "decode RSS/Atom feed"},
+		{name: "body limit", status: http.StatusOK, body: strings.Repeat("x", 64), bodyLimit: 32, content: "application/rss+xml", want: "source response exceeds 32 bytes"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", test.content)
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			source := RSSSource{Source: SourceConfig{URL: server.URL}, BodyLimit: test.bodyLimit}
+			_, err := source.Fetch(context.Background(), 1)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Fetch() error = %v, want message containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestRSSSourceHonorsCanceledContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := (RSSSource{Source: SourceConfig{URL: server.URL}}).Fetch(ctx, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Fetch() error = %v, want context.Canceled", err)
 	}
 }

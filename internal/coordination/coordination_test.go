@@ -112,6 +112,31 @@ func TestLeaseRepositoryRejectsStaleOwnerAndPreservesResult(t *testing.T) {
 	}
 }
 
+func TestLeaseRepositoryAllowsRecoveryAfterExpiry(t *testing.T) {
+	repository := newHarnessRepository()
+	started := time.Unix(100, 0)
+	first := LeaseRequest{Key: "task:expired", Owner: "one", Token: "token-one", Now: started, Lifetime: time.Second}
+	second := LeaseRequest{Key: "task:expired", Owner: "two", Token: "token-two", Now: started.Add(2 * time.Second), Lifetime: time.Second}
+
+	claimed, err := repository.AcquireLease(context.Background(), first)
+	if err != nil || !claimed {
+		t.Fatalf("first lease claimed=%v err=%v", claimed, err)
+	}
+	claimed, err = repository.AcquireLease(context.Background(), second)
+	if err != nil || !claimed {
+		t.Fatalf("recovery lease claimed=%v err=%v, want claim after expiry", claimed, err)
+	}
+
+	stored, err := repository.StoreIdempotency(context.Background(), IdempotencyWrite{Key: first.Key, Token: first.Token, Payload: []byte("stale"), StoredAt: second.Now})
+	if err != nil || stored {
+		t.Fatalf("stale owner stored=%v err=%v, want rejection after recovery", stored, err)
+	}
+	stored, err = repository.StoreIdempotency(context.Background(), IdempotencyWrite{Key: second.Key, Token: second.Token, Payload: []byte("recovered"), StoredAt: second.Now})
+	if err != nil || !stored {
+		t.Fatalf("recovered owner stored=%v err=%v, want durable result", stored, err)
+	}
+}
+
 type harnessLease struct {
 	owner     string
 	token     string

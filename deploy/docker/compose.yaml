@@ -7,6 +7,11 @@ services:
       - "3000:3000"
     volumes:
       - falkordb-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "6379", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   nightshift:
     build:
@@ -14,7 +19,8 @@ services:
       dockerfile: deploy/docker/Dockerfile
     restart: unless-stopped
     depends_on:
-      - falkordb
+      falkordb:
+        condition: service_healthy
     environment:
       NIGHTSHIFT_LISTEN: 0.0.0.0:8080
       NIGHTSHIFT_ENV: development
@@ -29,6 +35,11 @@ services:
       - "8080:8080"
     volumes:
       - nightshift-data:/var/lib/nightshift
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
 volumes:
   falkordb-data:
