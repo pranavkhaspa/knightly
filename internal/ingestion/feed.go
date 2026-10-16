@@ -73,12 +73,14 @@ func (l Limits) bounded() Limits {
 // SourceConfig describes the approved public source that owns normalized items.
 // The ID is stable across runs and is written to FalkorDB with every item.
 type SourceConfig struct {
-	ID         string
-	Name       string
-	Kind       string
-	URL        string
-	Enabled    bool
-	TrustScore float64
+	ID              string
+	Name            string
+	Kind            string
+	URL             string
+	Enabled         bool
+	TrustScore      float64
+	TechnologyHints []string
+	InterestHints   []string
 }
 
 // RawItem is the small, structured boundary between a source adapter and the

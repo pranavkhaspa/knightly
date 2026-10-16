@@ -18,6 +18,8 @@ SET source.name = $name,
     source.url = $url,
     source.enabled = $enabled,
     source.trust_score = $trust_score,
+    source.technology_hints = $technology_hints,
+    source.interest_hints = $interest_hints,
     source.updated_at = timestamp()
 `
 
@@ -68,12 +70,14 @@ func (c *Client) UpsertSource(ctx context.Context, source ingestion.SourceConfig
 		return errors.New("source ID, name, and URL are required")
 	}
 	_, err := c.user.Query(SourceUpsertQuery, map[string]interface{}{
-		"source_id":   source.ID,
-		"name":        source.Name,
-		"kind":        source.Kind,
-		"url":         source.URL,
-		"enabled":     source.Enabled,
-		"trust_score": source.TrustScore,
+		"source_id":        source.ID,
+		"name":             source.Name,
+		"kind":             source.Kind,
+		"url":              source.URL,
+		"enabled":          source.Enabled,
+		"trust_score":      source.TrustScore,
+		"technology_hints": source.TechnologyHints,
+		"interest_hints":   source.InterestHints,
 	}, c.options())
 	if err != nil {
 		return fmt.Errorf("upsert source %q: %w", source.ID, err)
