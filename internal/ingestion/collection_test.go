@@ -107,7 +107,7 @@ func TestCollectorUsesDurableCursorAndPerSourceInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first RunNow() error = %v", err)
 	}
-	if first.Succeeded != 1 || len(repository.items) != 1 || repository.cursors[configured.ID].ETag != `"feed-v1"` {
+	if first.Succeeded != 1 || len(first.Items) != 1 || len(repository.items) != 1 || repository.cursors[configured.ID].ETag != `"feed-v1"` {
 		t.Fatalf("first collection = %+v, items=%d cursor=%+v", first, len(repository.items), repository.cursors[configured.ID])
 	}
 

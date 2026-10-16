@@ -46,6 +46,18 @@ func (s *FixtureSource) Fetch(ctx context.Context, maxItems int) ([]RawItem, err
 	return items, nil
 }
 
+// FetchWithCursor lets the deterministic fixture participate in the same
+// scheduled collector contract as conditional HTTP adapters. The fixture has
+// no remote cursor semantics, so each due run returns its bounded items.
+func (s *FixtureSource) FetchWithCursor(ctx context.Context, cursor SourceCursor, maxItems int) (FetchResult, error) {
+	items, err := s.Fetch(ctx, maxItems)
+	if err != nil {
+		return FetchResult{}, err
+	}
+	cursor.SourceID = s.config.ID
+	return FetchResult{Items: items, Cursor: cursor}, nil
+}
+
 // DefaultFixtureSource provides a stable synthetic signal for the seeded
 // NightShift project. Its URL is intentionally non-routable and contains no
 // credentials or user data.

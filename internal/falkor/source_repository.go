@@ -75,6 +75,12 @@ SET run.status = $status,
     run.updated_at = $finished_at
 RETURN run.id AS id
 `
+
+	SourceDeleteQuery = `
+MATCH (source:Source {id: $source_id})
+OPTIONAL MATCH (source)-[:HAS_CURSOR|HAS_RUN]->(state)
+DETACH DELETE source, state
+`
 )
 
 type SourceRepository struct {
@@ -118,6 +124,22 @@ func (r *SourceRepository) ListSources(ctx context.Context) ([]ingestion.SourceC
 		sources = append(sources, source)
 	}
 	return sources, nil
+}
+
+// DeleteSource removes a configured source and its durable cursor/run state.
+// It is intentionally an optional repository capability so the collector seam
+// remains focused on reads and collection acknowledgements.
+func (r *SourceRepository) DeleteSource(ctx context.Context, sourceID string) error {
+	if err := r.ready(ctx); err != nil {
+		return err
+	}
+	if sourceID == "" {
+		return errors.New("source ID is required")
+	}
+	if _, err := r.client.user.Query(SourceDeleteQuery, map[string]interface{}{"source_id": sourceID}, r.client.options()); err != nil {
+		return fmt.Errorf("delete source from graph: %w", err)
+	}
+	return nil
 }
 
 func (r *SourceRepository) GetSourceCursor(ctx context.Context, sourceID string) (ingestion.SourceCursor, bool, error) {

@@ -28,6 +28,7 @@ type CollectionSummary struct {
 	Failed     int
 	Runs       []SourceRun
 	Errors     map[string]string
+	Items      []Item
 }
 
 type Collector struct {
@@ -130,8 +131,9 @@ func (c *Collector) Collect(ctx context.Context, options CollectOptions) (Collec
 			continue
 		}
 
-		run, runErr := c.collectSource(ctx, source, cursor)
+		run, items, runErr := c.collectSource(ctx, source, cursor)
 		summary.Runs = append(summary.Runs, run)
+		c.appendItems(&summary, items)
 		if runErr != nil {
 			c.recordFailure(&summary, source.ID, runErr)
 			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
@@ -146,7 +148,7 @@ func (c *Collector) Collect(ctx context.Context, options CollectOptions) (Collec
 	return summary, nil
 }
 
-func (c *Collector) collectSource(ctx context.Context, source SourceConfig, cursor SourceCursor) (SourceRun, error) {
+func (c *Collector) collectSource(ctx context.Context, source SourceConfig, cursor SourceCursor) (SourceRun, []Item, error) {
 	startedAt := c.now()
 	run := SourceRun{
 		ID:        StableID("source_run", fmt.Sprintf("%s\x00%s\x00%d", source.ID, startedAt.Format(time.RFC3339Nano), atomic.AddUint64(&c.sequence, 1))),
@@ -155,18 +157,20 @@ func (c *Collector) collectSource(ctx context.Context, source SourceConfig, curs
 		Status:    SourceRunRunning,
 	}
 	if err := c.Repository.BeginSourceRun(ctx, run); err != nil {
-		return run, fmt.Errorf("begin source run %q: %w", source.ID, err)
+		return run, nil, fmt.Errorf("begin source run %q: %w", source.ID, err)
 	}
 
 	cursor.SourceID = source.ID
 	cursor.LastAttemptAt = startedAt
 	if err := c.Repository.SaveSourceCursor(ctx, cursor); err != nil {
-		return c.failRun(ctx, run, fmt.Errorf("save source attempt cursor: %w", err))
+		failed, err := c.failRun(ctx, run, fmt.Errorf("save source attempt cursor: %w", err))
+		return failed, nil, err
 	}
 
 	adapter, err := c.Adapters.Resolve(source)
 	if err != nil {
-		return c.failRun(ctx, run, err)
+		failed, err := c.failRun(ctx, run, err)
+		return failed, nil, err
 	}
 	maxItems := source.MaxItems
 	if maxItems <= 0 || maxItems > hardMaxItems {
@@ -174,7 +178,8 @@ func (c *Collector) collectSource(ctx context.Context, source SourceConfig, curs
 	}
 	fetched, err := adapter.FetchWithCursor(ctx, cursor, maxItems)
 	if err != nil {
-		return c.failRun(ctx, run, fmt.Errorf("fetch source %q: %w", source.ID, err))
+		failed, err := c.failRun(ctx, run, fmt.Errorf("fetch source %q: %w", source.ID, err))
+		return failed, nil, err
 	}
 	fetched.Cursor.SourceID = source.ID
 	fetched.Cursor.LastAttemptAt = startedAt
@@ -185,20 +190,40 @@ func (c *Collector) collectSource(ctx context.Context, source SourceConfig, curs
 	if !fetched.NotModified {
 		result, pipelineErr := c.Pipeline.RunFetched(ctx, source, fetched.Items)
 		if pipelineErr != nil {
-			return c.failRun(ctx, run, pipelineErr)
+			failed, err := c.failRun(ctx, run, pipelineErr)
+			return failed, nil, err
 		}
 		run.NormalizedCount = result.Normalized
 		run.DuplicateCount = result.Duplicates
+		items := result.Items
+		if err := c.Repository.SaveSourceCursor(ctx, fetched.Cursor); err != nil {
+			failed, err := c.failRun(ctx, run, fmt.Errorf("save source cursor: %w", err))
+			return failed, items, err
+		}
+		run.Status = SourceRunSucceeded
+		run.FinishedAt = c.now()
+		if err := c.Repository.CompleteSourceRun(ctx, run); err != nil {
+			return run, items, fmt.Errorf("complete source run %q: %w", source.ID, err)
+		}
+		return run, items, nil
 	}
 	if err := c.Repository.SaveSourceCursor(ctx, fetched.Cursor); err != nil {
-		return c.failRun(ctx, run, fmt.Errorf("save source cursor: %w", err))
+		failed, err := c.failRun(ctx, run, fmt.Errorf("save source cursor: %w", err))
+		return failed, nil, err
 	}
 	run.Status = SourceRunSucceeded
 	run.FinishedAt = c.now()
 	if err := c.Repository.CompleteSourceRun(ctx, run); err != nil {
-		return run, fmt.Errorf("complete source run %q: %w", source.ID, err)
+		return run, nil, fmt.Errorf("complete source run %q: %w", source.ID, err)
 	}
-	return run, nil
+	return run, nil, nil
+}
+
+func (c *Collector) appendItems(summary *CollectionSummary, items []Item) {
+	if len(items) == 0 {
+		return
+	}
+	summary.Items = append(summary.Items, items...)
 }
 
 func (c *Collector) failRun(ctx context.Context, run SourceRun, runErr error) (SourceRun, error) {

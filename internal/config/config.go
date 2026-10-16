@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/pranavkhaspa/knightly/internal/identity"
 )
 
 // Config contains only deployment configuration. Durable product state belongs
@@ -12,6 +14,9 @@ type Config struct {
 	Listen             string
 	Environment        string
 	InstanceID         string
+	TenantID           string
+	UserID             string
+	ProjectID          string
 	FalkorURL          string
 	ControlGraph       string
 	UserGraph          string
@@ -25,6 +30,9 @@ func Load() (Config, error) {
 		Listen:             envOr("NIGHTSHIFT_LISTEN", "127.0.0.1:8080"),
 		Environment:        envOr("NIGHTSHIFT_ENV", "development"),
 		InstanceID:         instanceID(),
+		TenantID:           envOr("NIGHTSHIFT_TENANT_ID", "tenant_demo"),
+		UserID:             envOr("NIGHTSHIFT_USER_ID", "user_demo"),
+		ProjectID:          envOr("NIGHTSHIFT_PROJECT_ID", "project_nightshift"),
 		FalkorURL:          envOr("FALKORDB_URL", "redis://127.0.0.1:6379"),
 		ControlGraph:       envOr("FALKORDB_CONTROL_GRAPH", "nightshift_control"),
 		UserGraph:          envOr("FALKORDB_GRAPH", "nightshift_u_demo"),
@@ -48,8 +56,11 @@ func Load() (Config, error) {
 		c.ActionsEnabled = parsed
 	}
 
-	if c.Listen == "" || c.FalkorURL == "" || c.ControlGraph == "" || c.UserGraph == "" || c.DataDir == "" {
-		return Config{}, fmt.Errorf("listen, FalkorDB URL, and graph names must be non-empty")
+	if c.Listen == "" || c.FalkorURL == "" || c.ControlGraph == "" || c.UserGraph == "" || c.DataDir == "" || c.ProjectID == "" {
+		return Config{}, fmt.Errorf("listen, FalkorDB URL, graph names, and project ID must be non-empty")
+	}
+	if err := (identity.Scope{TenantID: c.TenantID, UserID: c.UserID}).Validate(); err != nil {
+		return Config{}, fmt.Errorf("invalid installation scope: %w", err)
 	}
 
 	return c, nil

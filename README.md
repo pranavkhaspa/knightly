@@ -36,6 +36,9 @@ relationships that make those behaviors possible.
 - External actions disabled by configuration and rejected by validation.
 - `/health/live` stays available while FalkorDB is unavailable; `/health/ready`
   returns a diagnostic `503` until graph connectivity is healthy.
+- Explicit initialization state starts the scheduler only after graph setup is
+  complete; `/api/v1/status` reports initialization, scheduler, and collection
+  state.
 - A framework-free dashboard shows the active graph path and persisted task
   status when FalkorDB is available.
 - Deterministic mode is the baseline; an LLM is optional and not yet wired.
@@ -71,6 +74,7 @@ curl -fsS http://127.0.0.1:8080/health/live
 curl -i http://127.0.0.1:8080/health/ready
 curl -fsS http://127.0.0.1:8080/api/v1/status
 curl -fsS http://127.0.0.1:8080/api/v1/dashboard
+curl -fsS http://127.0.0.1:8080/api/v1/sources
 ```
 
 Open <http://127.0.0.1:8080/> to see the embedded status page. The first
@@ -95,6 +99,9 @@ loader. Important settings:
 |---|---|---|
 | `NIGHTSHIFT_LISTEN` | HTTP bind address | `127.0.0.1:8080` |
 | `NIGHTSHIFT_INSTANCE_ID` | stable owner/status identity; falls back to `HOSTNAME` | `local-dev` on a host |
+| `NIGHTSHIFT_TENANT_ID` | trusted single-user installation tenant scope | `tenant_demo` |
+| `NIGHTSHIFT_USER_ID` | trusted single-user installation user scope | `user_demo` |
+| `NIGHTSHIFT_PROJECT_ID` | preferred project for collection recommendations | `project_nightshift` |
 | `FALKORDB_URL` | `redis://`, `rediss://`, `falkor://`, or `falkors://` URL | local FalkorDB |
 | `FALKORDB_CONTROL_GRAPH` | deployment/control metadata graph | `nightshift_control` |
 | `FALKORDB_GRAPH` | user-owned graph for this installation | `nightshift_u_demo` |
@@ -151,9 +158,9 @@ make health-check
 make concurrency-evidence
 ```
 
-`health-check` intentionally fails on `/health/ready` when the graph is down;
-that is the signal a deployment supervisor should use for dependency-aware
-readiness. The FalkorDB integration suite is also separate from the unit suite
+`health-check` intentionally fails on `/health/ready` while initialization or
+the graph is unavailable; that is the signal a deployment supervisor should use
+for dependency-aware readiness. The FalkorDB integration suite is also separate from the unit suite
 because it needs a live database, and it is disabled unless explicitly opted
 into:
 
@@ -178,9 +185,11 @@ than a mock.
 No performance number is claimed here for memory, CPU, startup time, dashboard
 latency, or a particular ARM/old-PC class. Those PRD targets remain unmeasured
 until the repeatable workload is run on the target hardware and its output is
-recorded. The current daemon also has no scheduled worker loop yet; the
-boundedness evidence covers the implemented HTTP, source, graph, action, and
-coordination paths.
+recorded. The daemon runs a bounded scheduler around the durable source
+collector. `POST /api/v1/runs` queues an explicit manual collection, scheduled
+collection also persists graph-backed recommendations and Relevance-to-Planner
+handoffs, and `/api/v1/scheduler/{pause,resume,status}` controls and reports the
+loop.
 
 ## Portable deployment
 
@@ -195,7 +204,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/nightshift-linu
 ```
 
 The current edge process uses bounded HTTP and graph requests and no local
-model. Its scheduled worker loop is not implemented yet. FalkorDB can remain
+model. FalkorDB can remain
 remote when the device does not have enough memory for the graph server.
 
 ### VPS
