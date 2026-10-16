@@ -36,7 +36,7 @@ relationships that make those behaviors possible.
   username/password authentication is configured.
 - Scope and approval identity come from trusted deployment configuration; HTTP
   clients cannot select a tenant, user, or approver with request fields.
-- External actions disabled by configuration and rejected by validation.
+- External actions disabled by default and gated by trusted explicit approval.
 - `/health/live` stays available while FalkorDB is unavailable; `/health/ready`
   returns a diagnostic `503` until graph connectivity is healthy.
 - Explicit initialization state starts the scheduler only after graph setup is
@@ -127,7 +127,7 @@ action state and idempotency record remain in FalkorDB.
 
 For a non-loopback bind, set either `NIGHTSHIFT_AUTH_TOKEN` or both Basic
 credential variables. Use a high-entropy secret from a secret manager in
-production. The auth middleware must be wired around the route handler; it
+production. The daemon wires the auth middleware around the route handler; it
 attaches the configured scope and approver to request context and ignores
 client-supplied scope or `approved_by` values. See
 [`docs/deployment.md`](docs/deployment.md) for the integration contract.

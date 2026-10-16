@@ -13,8 +13,8 @@ non-loopback binds unless `NIGHTSHIFT_AUTH_TOKEN` or a complete
 are compared without logging them. Use a high-entropy secret and transport the
 secret through the deployment secret store rather than a checked-in file.
 
-The integration package is intentionally separate from `cmd/nightshift/main.go`
-so the main agent can compose it with the application routes:
+The daemon composes the auth package with the application routes during
+startup. The wiring is equivalent to:
 
 ```go
 policy, err := auth.New(auth.Config{
