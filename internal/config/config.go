@@ -23,6 +23,7 @@ type Config struct {
 	ControlGraph       string
 	UserGraph          string
 	DataDir            string
+	SearchURL          string
 	QueryTimeoutMillis int
 	ActionsEnabled     bool
 
@@ -50,6 +51,7 @@ func Load() (Config, error) {
 		ControlGraph:       envOr("FALKORDB_CONTROL_GRAPH", "nightshift_control"),
 		UserGraph:          envOr("FALKORDB_GRAPH", "nightshift_u_demo"),
 		DataDir:            envOr("NIGHTSHIFT_DATA_DIR", "./data"),
+		SearchURL:          strings.TrimSpace(os.Getenv("NIGHTSHIFT_SEARCH_URL")),
 		QueryTimeoutMillis: 5000,
 		AuthToken:          os.Getenv("NIGHTSHIFT_AUTH_TOKEN"),
 		AuthUsername:       os.Getenv("NIGHTSHIFT_AUTH_USERNAME"),

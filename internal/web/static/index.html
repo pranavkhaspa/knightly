@@ -3,194 +3,162 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NightShift · graph dashboard</title>
+    <title>NightShift · personal agent</title>
     <style>
       :root {
         color-scheme: dark;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
-        --bg: #0b1020;
-        --panel: #121a2b;
-        --panel-soft: #17223a;
-        --line: #293957;
-        --text: #eef4ff;
-        --muted: #9eacc6;
-        --accent: #7dd3fc;
-        --good: #86efac;
-        --warn: #fcd34d;
+        --bg: #0b1020; --panel: #121a2b; --panel-soft: #17223a;
+        --line: #293957; --text: #eef4ff; --muted: #9eacc6;
+        --accent: #7dd3fc; --good: #86efac; --warn: #fcd34d;
       }
       * { box-sizing: border-box; }
       body { margin: 0; min-width: 320px; background: radial-gradient(circle at top, #17213b 0, var(--bg) 48rem); color: var(--text); }
-      main { max-width: 1120px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
-      header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 2rem; }
-      h1, h2, p { margin-top: 0; }
-      h1 { margin-bottom: .45rem; letter-spacing: -.04em; }
-      h2 { margin-bottom: 1rem; font-size: 1rem; }
-      p { color: var(--muted); line-height: 1.55; }
-      .eyebrow { margin-bottom: .5rem; color: var(--accent); font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-      .badge { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--line); border-radius: 999px; padding: .45rem .7rem; color: var(--muted); font-size: .8rem; white-space: nowrap; }
-      .badge::before { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn); content: ""; }
-      .badge.ready::before { background: var(--good); }
-      .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
-      .panel { border: 1px solid var(--line); border-radius: 16px; padding: 1.15rem; background: var(--panel); box-shadow: 0 12px 35px #0003; }
-      .wide { grid-column: span 2; }
-      .metric { font-size: 1.6rem; font-weight: 750; letter-spacing: -.03em; }
-      .label { margin-bottom: .35rem; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
-      .subtle { color: var(--muted); font-size: .9rem; }
-      .path { display: flex; align-items: stretch; gap: .6rem; overflow-x: auto; padding: .25rem 0 .45rem; }
-      .node { min-width: 150px; border: 1px solid #365276; border-radius: 12px; padding: .8rem; background: var(--panel-soft); }
-      .node-type { color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-      .node-name { margin-top: .35rem; font-weight: 700; }
-      .node-detail { margin-top: .3rem; color: var(--muted); font-size: .8rem; }
-      .arrow { align-self: center; color: var(--accent); font-size: 1.25rem; }
-      .task { display: grid; grid-template-columns: 1fr auto; gap: .4rem 1rem; border-top: 1px solid var(--line); padding: .8rem 0; }
-      .task:first-child { border-top: 0; padding-top: 0; }
-      .task-title { font-weight: 650; }
-      .task-meta { color: var(--muted); font-size: .82rem; }
-      .task-status { align-self: start; border: 1px solid var(--line); border-radius: 999px; padding: .25rem .55rem; color: var(--good); font-size: .75rem; }
-      .recommendation { border-top: 1px solid var(--line); padding: 1rem 0; }
-      .recommendation:first-child { border-top: 0; padding-top: 0; }
-      .recommendation-title { font-weight: 700; }
-      .recommendation-meta { margin-top: .3rem; color: var(--muted); font-size: .82rem; }
-      .recommendation-why { margin: .6rem 0; color: var(--muted); font-size: .9rem; line-height: 1.45; }
-      .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-      button { border: 1px solid #365276; border-radius: 8px; padding: .45rem .7rem; background: #1d2c48; color: var(--text); cursor: pointer; }
-      button:hover { border-color: var(--accent); }
-      button.primary { background: #075985; }
-      .empty { border: 1px dashed var(--line); border-radius: 10px; padding: 1rem; color: var(--muted); }
-      .error { border-color: #854d0e; background: #422006; color: #fde68a; }
-      code { color: var(--accent); }
-      @media (max-width: 760px) { header { display: block; } .badge { margin-top: 1rem; } .grid { grid-template-columns: 1fr; } .wide { grid-column: auto; } }
+      button, textarea { font: inherit; }
+      button { border: 1px solid #365276; border-radius: 9px; padding: .55rem .8rem; background: #1d2c48; color: var(--text); cursor: pointer; }
+      button:hover { border-color: var(--accent); } button:disabled { cursor: wait; opacity: .55; }
+      .shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+      aside { border-right: 1px solid var(--line); padding: 1.25rem; background: #0c1426cc; }
+      main { display: flex; min-width: 0; flex-direction: column; max-width: 1100px; width: 100%; margin: 0 auto; padding: 1.4rem 1.25rem; }
+      .brand { margin-bottom: 1.4rem; } .eyebrow { color: var(--accent); font-size: .72rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+      h1 { margin: .35rem 0 .45rem; font-size: 1.8rem; letter-spacing: -.05em; } h2 { margin: 0; font-size: 1rem; }
+      p { color: var(--muted); line-height: 1.5; } .subtle { color: var(--muted); font-size: .82rem; }
+      .new { width: 100%; margin-bottom: 1rem; background: #075985; } .conversation-list { display: grid; gap: .45rem; }
+      .conversation { display: block; width: 100%; overflow: hidden; border-color: transparent; background: transparent; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+      .conversation.active { border-color: #365276; background: var(--panel-soft); }
+      .status { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
+      .status-badge { border: 1px solid var(--line); border-radius: 999px; padding: .35rem .65rem; color: var(--muted); font-size: .78rem; }
+      .status-badge.ready { color: var(--good); border-color: #285a43; }
+      .messages { flex: 1; min-height: 360px; overflow-y: auto; padding: .5rem 0 1.5rem; }
+      .empty { border: 1px dashed var(--line); border-radius: 12px; padding: 1rem; color: var(--muted); }
+      .message { max-width: 78%; margin: .8rem 0; border: 1px solid var(--line); border-radius: 14px; padding: .8rem 1rem; background: var(--panel); white-space: pre-wrap; line-height: 1.5; }
+      .message.user { margin-left: auto; border-color: #265578; background: #10314d; }
+      .message.progress, .message.tool { border-style: dashed; color: var(--muted); }
+      .message-role { margin-bottom: .3rem; color: var(--accent); font-size: .7rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+      .composer { border: 1px solid var(--line); border-radius: 14px; padding: .7rem; background: var(--panel); }
+      textarea { display: block; width: 100%; min-height: 70px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.45; }
+      .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .4rem; }
+      .send { background: #075985; } .error { color: #fde68a; }
+      .right-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin-top: 1rem; }
+      .metric { border: 1px solid var(--line); border-radius: 11px; padding: .75rem; background: var(--panel); }
+      .metric-label { color: var(--muted); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+      .metric-value { margin-top: .25rem; font-size: .95rem; font-weight: 700; }
+      @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .conversation-list { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } .message { max-width: 94%; } }
     </style>
   </head>
   <body>
-    <main>
-      <header>
-        <div>
-          <div class="eyebrow">FalkorDB-first developer intern</div>
+    <div class="shell">
+      <aside>
+        <div class="brand">
+          <div class="eyebrow">FalkorDB-first personal agent</div>
           <h1>NightShift</h1>
-          <p>See the active project, the graph path behind it, and persisted agent work from one lightweight dashboard.</p>
+          <div class="subtle">Chat, evidence, tasks, and approvals that survive restart.</div>
         </div>
-        <div class="badge" id="service-badge">Checking service…</div>
-      </header>
-
-      <section class="grid" aria-live="polite">
-        <article class="panel">
-          <div class="label">Service</div>
-          <div class="metric" id="service-value">—</div>
-          <div class="subtle" id="service-detail">Loading status</div>
-        </article>
-        <article class="panel">
-          <div class="label">Graph</div>
-          <div class="metric" id="graph-value">—</div>
-          <div class="subtle" id="graph-detail">Loading FalkorDB</div>
-        </article>
-        <article class="panel">
-          <div class="label">Recent tasks</div>
-          <div class="metric" id="task-count">—</div>
-          <div class="subtle">Persisted in the user graph</div>
-        </article>
-
-        <article class="panel wide">
-          <h2>Graph path</h2>
-          <div id="path" class="path"><div class="empty">Loading the graph path…</div></div>
-          <p class="subtle" id="path-caption">The path is returned by FalkorDB; it is not generated by the browser.</p>
-        </article>
-        <article class="panel">
-          <h2>Active project</h2>
-          <div class="metric" id="project-name">—</div>
-          <div class="subtle" id="project-detail">Loading project context</div>
-        </article>
-
-        <article class="panel wide">
-          <h2>Graph-backed recommendations</h2>
-          <div id="recommendations"><div class="empty">Run the deterministic public fixture to find connected items.</div></div>
-        </article>
-        <article class="panel">
-          <h2>Demo controls</h2>
-          <p class="subtle">This runs bounded synthetic public data. Every recommendation must have a FalkorDB evidence path.</p>
-          <button class="primary" id="run-button" type="button">Run fixture collection</button>
-          <div class="subtle" id="run-result" style="margin-top:.7rem"></div>
-        </article>
-
-        <article class="panel wide">
-          <h2>Agent task status</h2>
-          <div id="tasks"><div class="empty">Loading tasks…</div></div>
-        </article>
-        <article class="panel">
-          <h2>What this means</h2>
-          <p>The graph is the source of truth for project context and task state. When the graph is offline, the service remains live and this page shows the connection failure.</p>
-          <p class="subtle">API: <code>/api/v1/dashboard</code></p>
-        </article>
-      </section>
-    </main>
+        <button class="new" id="new-conversation" type="button">+ New conversation</button>
+        <div class="subtle" style="margin-bottom:.5rem">Conversations</div>
+        <div id="conversation-list" class="conversation-list"><div class="empty">Loading…</div></div>
+      </aside>
+      <main>
+        <div class="status">
+          <div><h2 id="conversation-title">New conversation</h2><div class="subtle" id="conversation-detail">Durable chat stream</div></div>
+          <div class="status-badge" id="service-status">Checking service…</div>
+        </div>
+        <section id="messages" class="messages" aria-live="polite"><div class="empty">Ask NightShift what changed, search the web, or start a bounded coding task.</div></section>
+        <form id="composer" class="composer">
+          <textarea id="prompt" maxlength="32000" placeholder="Message NightShift…" aria-label="Message NightShift"></textarea>
+          <div class="composer-footer"><span id="composer-status" class="subtle">Messages are persisted in FalkorDB.</span><button class="send" id="send" type="submit">Send</button></div>
+        </form>
+        <section class="right-panel" aria-label="NightShift status">
+          <div class="metric"><div class="metric-label">Graph</div><div class="metric-value" id="graph-status">—</div></div>
+          <div class="metric"><div class="metric-label">Initialization</div><div class="metric-value" id="init-status">—</div></div>
+          <div class="metric"><div class="metric-label">Events</div><div class="metric-value" id="event-status">Replayable</div></div>
+        </section>
+      </main>
+    </div>
     <script>
-      const text = (value, fallback = '—') => value || fallback;
-      const escapeHTML = value => String(value).replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
+      const state = { conversations: [], current: null, lastEvent: 0, source: null };
+      const $ = selector => document.querySelector(selector);
+      const escapeHTML = value => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+      const roleLabel = role => ({user:'You', assistant:'NightShift', system:'System', tool:'Tool', progress:'Progress'}[role] || role);
 
-      async function loadDashboard() {
-        const [statusResponse, dashboardResponse, recommendationsResponse] = await Promise.all([
-          fetch('/api/v1/status'),
-          fetch('/api/v1/dashboard'),
-          fetch('/api/v1/recommendations')
-        ]);
-        const status = await statusResponse.json();
-        document.querySelector('#service-value').textContent = text(status.service);
-        document.querySelector('#service-detail').textContent = `${text(status.instance_id)} · up ${text(status.uptime)}`;
-        const graph = status.graph || {};
-        document.querySelector('#graph-value').textContent = graph.available ? 'Connected' : 'Offline';
-        document.querySelector('#graph-detail').textContent = graph.available ? `${graph.node_count || 0} nodes · ${graph.relationship_count || 0} relationships` : text(graph.error, 'Waiting for FalkorDB');
-        const badge = document.querySelector('#service-badge');
-        badge.textContent = graph.available ? 'Graph connected' : 'Graph unavailable';
-        badge.classList.toggle('ready', graph.available);
-
-        if (!dashboardResponse.ok) throw new Error(`Dashboard request returned ${dashboardResponse.status}`);
-        const dashboard = await dashboardResponse.json();
-        const recommendations = recommendationsResponse.ok ? (await recommendationsResponse.json()).recommendations || [] : [];
-        const project = dashboard.project || {};
-        document.querySelector('#project-name').textContent = text(project.name, 'No project');
-        document.querySelector('#project-detail').textContent = project.id ? `${project.id} · ${text(project.status, 'unknown status')}` : 'Create or seed a project in FalkorDB';
-
-        const path = dashboard.graph_path || [];
-        const pathElement = document.querySelector('#path');
-        pathElement.innerHTML = path.length ? path.map((node, index) => `${index ? '<div class="arrow" aria-hidden="true">→</div>' : ''}<div class="node"><div class="node-type">${escapeHTML(node.type)}</div><div class="node-name">${escapeHTML(text(node.name, node.id))}</div><div class="node-detail">${escapeHTML(text(node.detail, node.id))}</div></div>`).join('') : '<div class="empty">No connected graph path yet. The project can exist before an item is related to it.</div>';
-        document.querySelector('#path-caption').textContent = path.length ? 'Project context currently resolves through the connected requirement and technology nodes in FalkorDB.' : 'Add a connected requirement path before presenting a recommendation.';
-
-        const tasks = dashboard.tasks || [];
-        document.querySelector('#task-count').textContent = tasks.length;
-        const tasksElement = document.querySelector('#tasks');
-        tasksElement.innerHTML = tasks.length ? tasks.map(task => `<div class="task"><div><div class="task-title">${escapeHTML(text(task.title, task.id))}</div><div class="task-meta">${escapeHTML(text(task.agent, 'Unassigned'))} · ${escapeHTML(text(task.id))}</div></div><div class="task-status">${escapeHTML(text(task.status, 'pending'))}</div></div>`).join('') : '<div class="empty">No agent tasks have been persisted yet.</div>';
-
-        const recommendationsElement = document.querySelector('#recommendations');
-        recommendationsElement.innerHTML = recommendations.length ? recommendations.map(item => `<div class="recommendation"><div class="recommendation-title">${escapeHTML(text(item.title, item.id))}</div><div class="recommendation-meta">score ${escapeHTML(String(item.score || 0))} · ${escapeHTML(text(item.ranking_version))}</div><div class="recommendation-why">${escapeHTML(text(item.why, 'Connected through FalkorDB graph evidence.'))}</div><div class="actions"><button type="button" data-feedback="useful" data-id="${escapeHTML(item.id)}">Useful</button><button type="button" data-feedback="save_for_later" data-id="${escapeHTML(item.id)}">Save</button><button class="primary" type="button" data-plan="${escapeHTML(item.id)}">Propose plan</button></div></div>`).join('') : '<div class="empty">No graph-backed recommendations yet.</div>';
-        recommendationsElement.querySelectorAll('[data-feedback]').forEach(button => button.addEventListener('click', async () => {
-          await fetch(`/api/v1/recommendations/${encodeURIComponent(button.dataset.id)}/feedback`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({kind: button.dataset.feedback})});
-          button.textContent = 'Saved';
-        }));
-        recommendationsElement.querySelectorAll('[data-plan]').forEach(button => button.addEventListener('click', async () => {
-          const response = await fetch(`/api/v1/recommendations/${encodeURIComponent(button.dataset.plan)}/plan`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({goal: 'Prepare the smallest bounded implementation task.'})});
-          button.textContent = response.ok ? 'Plan proposed' : 'Plan failed';
-        }));
+      async function jsonRequest(url, options) {
+        const response = await fetch(url, options);
+        let body = {};
+        try { body = await response.json(); } catch (_) {}
+        if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`);
+        return body;
       }
 
-      document.querySelector('#run-button').addEventListener('click', async () => {
-        const button = document.querySelector('#run-button');
-        const result = document.querySelector('#run-result');
-        button.disabled = true;
-        result.textContent = 'Collecting and querying FalkorDB…';
+      async function loadStatus() {
         try {
-          const response = await fetch('/api/v1/runs', {method: 'POST'});
-          const body = await response.json();
-          if (!response.ok) throw new Error(body.error?.message || 'run failed');
-          result.textContent = `${body.recommendations.length} graph-backed recommendation(s) · handoff ${body.handoff_created ? 'created' : 'not created'}`;
-          await loadDashboard();
-        } catch (error) { result.textContent = error.message; }
+          const status = await jsonRequest('/api/v1/status');
+          const graph = status.graph || {};
+          $('#graph-status').textContent = graph.available ? `${graph.node_count || 0} nodes` : 'Offline';
+          $('#init-status').textContent = status.initialization || 'unknown';
+          $('#service-status').textContent = graph.available ? 'Graph connected' : 'Graph unavailable';
+          $('#service-status').classList.toggle('ready', Boolean(graph.available));
+        } catch (error) { $('#service-status').textContent = error.message; }
+      }
+
+      function renderConversations() {
+        const element = $('#conversation-list');
+        element.innerHTML = state.conversations.length ? state.conversations.map(item => `<button class="conversation ${state.current?.id === item.id ? 'active' : ''}" data-conversation="${escapeHTML(item.id)}" type="button">${escapeHTML(item.title)}</button>`).join('') : '<div class="empty">No conversations yet.</div>';
+        element.querySelectorAll('[data-conversation]').forEach(button => button.addEventListener('click', () => openConversation(button.dataset.conversation)));
+      }
+
+      function renderMessages(messages) {
+        const element = $('#messages');
+        element.innerHTML = messages.length ? messages.map(message => `<article class="message ${escapeHTML(message.role)}"><div class="message-role">${escapeHTML(roleLabel(message.role))}</div><div>${escapeHTML(message.content)}</div></article>`).join('') : '<div class="empty">Ask NightShift what changed, search the web, or start a bounded coding task.</div>';
+        element.scrollTop = element.scrollHeight;
+      }
+
+      function listenForEvents() {
+        if (!state.current) return;
+        if (state.source) state.source.close();
+        state.source = new EventSource(`/api/v1/conversations/${encodeURIComponent(state.current.id)}/events?after=${state.lastEvent}`);
+        const refresh = event => { if (event.lastEventId) state.lastEvent = Math.max(state.lastEvent, Number(event.lastEventId) || 0); openConversation(state.current.id, false); };
+        ['message.created', 'assistant.completed', 'turn.completed', 'turn.failed'].forEach(type => state.source.addEventListener(type, refresh));
+        state.source.onerror = () => { $('#event-status').textContent = 'Reconnecting…'; };
+      }
+
+      async function openConversation(id, reconnect = true) {
+        try {
+          const body = await jsonRequest(`/api/v1/conversations/${encodeURIComponent(id)}`);
+          state.current = body.conversation;
+          state.lastEvent = state.current.event_sequence || 0;
+          $('#conversation-title').textContent = state.current.title;
+          $('#conversation-detail').textContent = `${state.current.status} · ${state.current.id}`;
+          renderMessages(body.messages || []); renderConversations();
+          if (reconnect) listenForEvents();
+        } catch (error) { $('#messages').innerHTML = `<div class="empty error">${escapeHTML(error.message)}</div>`; }
+      }
+
+      async function loadConversations() {
+        const body = await jsonRequest('/api/v1/conversations');
+        state.conversations = body.conversations || [];
+        renderConversations();
+        if (state.conversations[0]) await openConversation(state.conversations[0].id);
+        else await createConversation();
+      }
+
+      async function createConversation() {
+        const value = await jsonRequest('/api/v1/conversations', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:'New conversation'})});
+        state.conversations.unshift(value); renderConversations(); await openConversation(value.id);
+      }
+
+      $('#new-conversation').addEventListener('click', () => createConversation().catch(error => $('#composer-status').textContent = error.message));
+      $('#composer').addEventListener('submit', async event => {
+        event.preventDefault();
+        const prompt = $('#prompt').value.trim(); if (!prompt || !state.current) return;
+        const button = $('#send'); button.disabled = true; $('#composer-status').textContent = 'Saving turn…';
+        try {
+          await jsonRequest(`/api/v1/conversations/${encodeURIComponent(state.current.id)}/messages`, {method:'POST', headers:{'Content-Type':'application/json','X-Request-ID':`browser_${Date.now()}`}, body:JSON.stringify({content:prompt})});
+          $('#prompt').value = ''; await openConversation(state.current.id); $('#composer-status').textContent = 'Turn saved; event stream is replayable.';
+        } catch (error) { $('#composer-status').textContent = error.message; }
         button.disabled = false;
       });
-
-      loadDashboard().catch(error => {
-        document.querySelector('#service-badge').textContent = 'Dashboard unavailable';
-        document.querySelector('#path').innerHTML = `<div class="empty error">${escapeHTML(error.message)}. Check <code>/health/ready</code> and the FalkorDB connection.</div>`;
-      });
+      loadStatus(); loadConversations().catch(error => { $('#messages').innerHTML = `<div class="empty error">${escapeHTML(error.message)}. Start FalkorDB, then reload.</div>`; });
+      setInterval(loadStatus, 15000);
     </script>
   </body>
 </html>

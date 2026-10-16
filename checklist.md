@@ -34,22 +34,22 @@ Status: implementation plan committed before product changes
 - [x] Authenticated non-loopback deployment behavior exists.
 - [x] Docker Compose, systemd, Render, AMD64, and ARM64 assets exist.
 - [ ] A reachable FalkorDB service is available for live verification.
-- [ ] A chat conversation/message/event model exists.
-- [ ] A streaming chat endpoint exists.
-- [ ] The UI is chat-first.
-- [ ] SearXNG, Gmail, Google Calendar, and OpenCode adapters exist.
+- [x] A chat conversation/message/event model exists.
+- [x] A replayable SSE chat event endpoint exists.
+- [x] The UI is chat-first.
+- [ ] SearXNG, Gmail, Google Calendar, and OpenCode integrations are complete.
 - [ ] A complete morning report/inbox flow exists.
 
 ## Phase 0 — contracts and graph schema
 
 ### Durable FalkorDB records
 
-- [ ] Add `Conversation` records with tenant, user, project, title, status, and
+- [x] Add `Conversation` records with tenant, user, project, title, status, and
       timestamps.
-- [ ] Add ordered `Message` records with role, bounded content, citations, and
+- [x] Add ordered `Message` records with role, bounded content, citations, and
       tool/task references.
 - [ ] Add `Turn` records with idempotency key, status, and terminal result.
-- [ ] Add ordered `Event` records with a per-stream sequence number.
+- [x] Add ordered `Event` records with a per-stream sequence number.
 - [ ] Add `Run`/`AgentRun` records with provider and provider-session metadata.
 - [ ] Extend tasks with phase, progress, retry, lease, conversation, turn, provider,
       and provider-session fields.
@@ -122,10 +122,10 @@ Every event includes `event_id`, `sequence`, `tenant_id`, `user_id`,
 `conversation_id`, `turn_id`, `task_id`, `run_id`, `created_at`, `event_type`,
 and bounded data.
 
-- [ ] Persist events in FalkorDB before publishing them to a client.
-- [ ] Make event sequences monotonic per conversation/run stream.
-- [ ] Implement replay from `Last-Event-ID`.
-- [ ] Make terminal events idempotent.
+- [x] Persist events in FalkorDB before publishing them to a client.
+- [x] Make event sequences monotonic per conversation/run stream.
+- [x] Implement replay from `Last-Event-ID`.
+- [x] Make terminal events idempotent.
 - [ ] Never persist tokens, cookies, full private payloads, or unbounded raw text.
 - [ ] Mark all web, mail, calendar, and GitHub content as untrusted external input.
 
@@ -133,14 +133,14 @@ and bounded data.
 
 ### Conversation APIs
 
-- [ ] `GET /api/v1/conversations`
-- [ ] `POST /api/v1/conversations`
-- [ ] `GET /api/v1/conversations/{id}`
-- [ ] `PATCH /api/v1/conversations/{id}`
-- [ ] `GET /api/v1/conversations/{id}/messages`
-- [ ] `POST /api/v1/conversations/{id}/messages`
+- [x] `GET /api/v1/conversations`
+- [x] `POST /api/v1/conversations`
+- [x] `GET /api/v1/conversations/{id}`
+- [x] `PATCH /api/v1/conversations/{id}`
+- [x] `GET /api/v1/conversations/{id}/messages`
+- [x] `POST /api/v1/conversations/{id}/messages`
 - [ ] `POST /api/v1/conversations/{id}/cancel`
-- [ ] `GET /api/v1/conversations/{id}/events`
+- [x] `GET /api/v1/conversations/{id}/events`
 - [ ] Use trusted request scope rather than client-supplied tenant/user IDs.
 - [ ] Enforce bounded message size and pagination.
 - [ ] Persist user, assistant, system, tool, and progress messages distinctly.
@@ -196,7 +196,7 @@ propose_github_action
 
 ### Frontend
 
-- [ ] Replace the dashboard landing page with a chat-first layout.
+- [x] Replace the dashboard landing page with a chat-first layout.
 - [ ] Add conversation sidebar and new-conversation flow.
 - [ ] Add streamed assistant output and progress cards.
 - [ ] Add citations, source detail, and FalkorDB graph-path drawer.
@@ -301,7 +301,7 @@ credit card. Its documented `/search` endpoint supports JSON when enabled in the
 instance settings.
 
 - [ ] Add a `SearchProvider` interface and normalized result type.
-- [ ] Add SearXNG base URL configuration.
+- [x] Add SearXNG base URL configuration.
 - [ ] Require HTTPS for remote instances unless explicitly in development.
 - [ ] Configure a private/local SearXNG instance with JSON output enabled.
 - [ ] Pin the optional SearXNG container/image when adding it to local Compose.
@@ -309,7 +309,7 @@ instance settings.
 - [ ] Add timeout, retry classification, rate limiting, and circuit breaking.
 - [ ] Store citations/evidence in FalkorDB without storing unbounded page bodies.
 - [ ] Treat all result text as untrusted input.
-- [ ] Add a deterministic fake provider for tests.
+- [x] Add a deterministic HTTP fake-provider test suite.
 - [ ] Optionally use OpenCode's built-in websearch only as a coding-session fallback;
       it must not become a hidden NightShift policy or credential dependency.
 

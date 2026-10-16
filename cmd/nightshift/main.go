@@ -22,6 +22,7 @@ import (
 	"github.com/pranavkhaspa/knightly/internal/actions"
 	"github.com/pranavkhaspa/knightly/internal/agents"
 	"github.com/pranavkhaspa/knightly/internal/auth"
+	"github.com/pranavkhaspa/knightly/internal/chat"
 	"github.com/pranavkhaspa/knightly/internal/config"
 	"github.com/pranavkhaspa/knightly/internal/falkor"
 	"github.com/pranavkhaspa/knightly/internal/identity"
@@ -33,6 +34,7 @@ import (
 	"github.com/pranavkhaspa/knightly/internal/recommendation"
 	"github.com/pranavkhaspa/knightly/internal/requirement"
 	"github.com/pranavkhaspa/knightly/internal/scheduler"
+	"github.com/pranavkhaspa/knightly/internal/search"
 	"github.com/pranavkhaspa/knightly/internal/session"
 	"github.com/pranavkhaspa/knightly/internal/web"
 )
@@ -58,6 +60,8 @@ type application struct {
 	memory       *memory.Service
 	coordinator  *agents.Coordinator
 	actions      *actions.Service
+	chat         *chat.Service
+	search       search.Provider
 	tools        *mcp.Server
 	profiles     *profile.Service
 	projects     *project.Service
@@ -128,12 +132,23 @@ func newApplication(cfg config.Config, graph *falkor.Client) (*application, erro
 		memory:         memoryService,
 		coordinator:    agents.NewCoordinator(falkor.NewAgentRepository(graph)),
 		actions:        actions.NewService(falkor.NewActionRepository(graph), cfg.ActionsEnabled),
+		chat:           chat.NewService(falkor.NewChatRepository(selector)),
 		profiles:       profile.NewService(falkor.NewProfileRepository(selector)),
 		projects:       project.NewService(falkor.NewProjectRepository(selector)),
 		requirements:   requirement.NewService(falkor.NewRequirementRepository(selector)),
 		sessions:       session.NewService(falkor.NewSessionDecisionRepository(selector)),
 		sources:        falkor.NewSourceRepository(graph, scope),
 		initialization: stateStarting,
+	}
+	if cfg.SearchURL != "" {
+		provider, providerErr := search.NewSearXNGProvider(search.SearXNGConfig{
+			BaseURL: cfg.SearchURL,
+			Client:  &http.Client{Timeout: 10 * time.Second},
+		})
+		if providerErr != nil {
+			return nil, fmt.Errorf("construct search provider: %w", providerErr)
+		}
+		app.search = provider
 	}
 	app.adapters = ingestion.NewHTTPAdapterRegistry(&http.Client{Timeout: 15 * time.Second}, 2<<20, "NightShift/0.1")
 	fixture := ingestion.DefaultFixtureSource()
@@ -300,6 +315,14 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions/{id}", a.sessionRead)
 	mux.HandleFunc("POST /api/v1/sessions", a.sessionSave)
 	mux.HandleFunc("PUT /api/v1/sessions/{id}", a.sessionSave)
+	mux.HandleFunc("GET /api/v1/conversations", a.conversationsRead)
+	mux.HandleFunc("POST /api/v1/conversations", a.conversationCreate)
+	mux.HandleFunc("GET /api/v1/conversations/{id}", a.conversationRead)
+	mux.HandleFunc("PATCH /api/v1/conversations/{id}", a.conversationUpdate)
+	mux.HandleFunc("GET /api/v1/conversations/{id}/messages", a.messagesRead)
+	mux.HandleFunc("POST /api/v1/conversations/{id}/messages", a.messageCreate)
+	mux.HandleFunc("GET /api/v1/conversations/{id}/events", a.eventsStream)
+	mux.HandleFunc("GET /api/v1/search", a.searchRead)
 	mux.HandleFunc("GET /api/v1/decisions", a.decisionsRead)
 	mux.HandleFunc("POST /api/v1/decisions", a.decisionSave)
 	mux.HandleFunc("GET /api/v1/decisions/{id}", a.decisionRead)
@@ -888,6 +911,330 @@ func (a *application) decisionSave(w http.ResponseWriter, request *http.Request)
 	writeJSON(w, status, saved)
 }
 
+type conversationRequest struct {
+	Title     string `json:"title,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+}
+
+type conversationUpdateRequest struct {
+	Title  *string                  `json:"title,omitempty"`
+	Status *chat.ConversationStatus `json:"status,omitempty"`
+}
+
+type messageRequest struct {
+	ID      string `json:"id,omitempty"`
+	TurnID  string `json:"turn_id,omitempty"`
+	Content string `json:"content"`
+}
+
+func (a *application) conversationsRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	values, err := a.chat.ListConversations(request.Context(), a.scope, parseLimit(request.URL.Query().Get("limit"), chat.DefaultLimit))
+	if err != nil {
+		writeDomainError(w, "CONVERSATION_LIST_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"conversations": values})
+}
+
+func (a *application) conversationCreate(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	var body conversationRequest
+	if err := decodeJSON(w, request, &body); err != nil {
+		return
+	}
+	value, err := a.chat.CreateConversation(request.Context(), a.scope, body.ProjectID, body.Title)
+	if err != nil {
+		writeDomainError(w, "CONVERSATION_CREATE_FAILED", err)
+		return
+	}
+	_, _ = a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+		ID:             stableAPIID("event", value.ID+"\x00created"),
+		ConversationID: value.ID,
+		Type:           chat.ConversationCreated,
+		Data:           map[string]string{"title": value.Title},
+	})
+	writeJSON(w, http.StatusCreated, value)
+}
+
+func (a *application) conversationRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	value, err := a.chat.GetConversation(request.Context(), a.scope, request.PathValue("id"))
+	if err != nil {
+		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
+		return
+	}
+	messages, err := a.chat.ListMessages(request.Context(), a.scope, value.ID, parseLimit(request.URL.Query().Get("message_limit"), chat.DefaultLimit))
+	if err != nil {
+		writeDomainError(w, "MESSAGE_LIST_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"conversation": value, "messages": messages})
+}
+
+func (a *application) conversationUpdate(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	var body conversationUpdateRequest
+	if err := decodeJSON(w, request, &body); err != nil {
+		return
+	}
+	value, err := a.chat.GetConversation(request.Context(), a.scope, request.PathValue("id"))
+	if err != nil {
+		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
+		return
+	}
+	if body.Title != nil {
+		value.Title = *body.Title
+	}
+	if body.Status != nil {
+		value.Status = *body.Status
+	}
+	updated, err := a.chat.UpdateConversation(request.Context(), a.scope, value)
+	if err != nil {
+		writeDomainError(w, "CONVERSATION_UPDATE_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (a *application) messagesRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	conversationID := request.PathValue("id")
+	if _, err := a.chat.GetConversation(request.Context(), a.scope, conversationID); err != nil {
+		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
+		return
+	}
+	values, err := a.chat.ListMessages(request.Context(), a.scope, conversationID, parseLimit(request.URL.Query().Get("limit"), chat.DefaultLimit))
+	if err != nil {
+		writeDomainError(w, "MESSAGE_LIST_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"messages": values})
+}
+
+func (a *application) messageCreate(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	conversationID := request.PathValue("id")
+	if _, err := a.chat.GetConversation(request.Context(), a.scope, conversationID); err != nil {
+		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
+		return
+	}
+	var body messageRequest
+	if err := decodeJSON(w, request, &body); err != nil {
+		return
+	}
+	requestID := requestIdentifier(request)
+	turnID := body.TurnID
+	if turnID == "" {
+		turnID = stableAPIID("turn", conversationID+"\x00"+requestID)
+	}
+	messageID := body.ID
+	if messageID == "" {
+		messageID = stableAPIID("message", conversationID+"\x00"+requestID)
+	}
+	userMessage, err := a.chat.AddMessage(request.Context(), a.scope, chat.Message{
+		ID: messageID, ConversationID: conversationID, TurnID: turnID,
+		Role: chat.RoleUser, Content: body.Content,
+	})
+	if err != nil {
+		writeDomainError(w, "MESSAGE_CREATE_FAILED", err)
+		return
+	}
+	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+		ID: stableAPIID("event", turnID+"\x00message"), ConversationID: conversationID, TurnID: turnID,
+		Type: chat.MessageCreated, Data: map[string]string{"message_id": userMessage.ID, "role": string(userMessage.Role)},
+	}); err != nil {
+		writeDomainError(w, "EVENT_APPEND_FAILED", err)
+		return
+	}
+	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+		ID: stableAPIID("event", turnID+"\x00started"), ConversationID: conversationID, TurnID: turnID,
+		Type: chat.TurnStarted, Data: map[string]string{"message_id": userMessage.ID},
+	}); err != nil {
+		writeDomainError(w, "EVENT_APPEND_FAILED", err)
+		return
+	}
+
+	assistantContent := "I recorded your request. Provider-backed search and coding actions will stream into this conversation as they are configured."
+	var assistantCitations []chat.Citation
+	if query, shouldSearch := chatSearchQuery(body.Content); shouldSearch && a.search != nil {
+		_, _ = a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+			ID: stableAPIID("event", turnID+"\x00search-started"), ConversationID: conversationID, TurnID: turnID,
+			Type: chat.TurnProgress, Data: map[string]string{"phase": "search", "query": query},
+		})
+		result, searchErr := a.search.Search(request.Context(), search.SearchRequest{Query: query, Limit: 5})
+		if searchErr != nil {
+			assistantContent = "I could not complete the web search: " + searchErr.Error()
+		} else {
+			assistantContent, assistantCitations = formatSearchAnswer(result)
+		}
+		_, _ = a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+			ID: stableAPIID("event", turnID+"\x00search-completed"), ConversationID: conversationID, TurnID: turnID,
+			Type: chat.TurnProgress, Data: map[string]string{"phase": "search", "status": "completed"},
+		})
+	}
+	// This deterministic response keeps the durable chat flow useful before an
+	// optional model or external search provider is configured. Provider-backed
+	// responders preserve the same message and event records.
+	assistantMessage, err := a.chat.AddMessage(request.Context(), a.scope, chat.Message{
+		ID: stableAPIID("message", turnID+"\x00assistant"), ConversationID: conversationID, TurnID: turnID,
+		Role: chat.RoleAssistant, Content: assistantContent, Citations: assistantCitations,
+	})
+	if err != nil {
+		writeDomainError(w, "MESSAGE_CREATE_FAILED", err)
+		return
+	}
+	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+		ID: stableAPIID("event", turnID+"\x00assistant"), ConversationID: conversationID, TurnID: turnID,
+		Type: chat.MessageCreated, Data: map[string]string{"message_id": assistantMessage.ID, "role": string(assistantMessage.Role)},
+	}); err != nil {
+		writeDomainError(w, "EVENT_APPEND_FAILED", err)
+		return
+	}
+	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+		ID: stableAPIID("event", turnID+"\x00completed"), ConversationID: conversationID, TurnID: turnID,
+		Type: chat.AssistantCompleted, Data: map[string]string{"message_id": assistantMessage.ID},
+	}); err != nil {
+		writeDomainError(w, "EVENT_APPEND_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"conversation_id": conversationID, "turn_id": turnID,
+		"user_message": userMessage, "assistant_message": assistantMessage,
+		"stream_url": "/api/v1/conversations/" + conversationID + "/events",
+	})
+}
+
+func (a *application) eventsStream(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	after := int64(0)
+	if value := request.Header.Get("Last-Event-ID"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "INVALID_EVENT_CURSOR", errors.New("Last-Event-ID must be a non-negative integer"), false)
+			return
+		}
+		after = parsed
+	}
+	if value := request.URL.Query().Get("after"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "INVALID_EVENT_CURSOR", errors.New("after must be a non-negative integer"), false)
+			return
+		}
+		after = parsed
+	}
+	conversationID := request.PathValue("id")
+	if _, err := a.chat.GetConversation(request.Context(), a.scope, conversationID); err != nil {
+		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
+		return
+	}
+	events, err := a.chat.ListEvents(request.Context(), a.scope, conversationID, after, parseLimit(request.URL.Query().Get("limit"), chat.MaxLimit))
+	if err != nil {
+		writeDomainError(w, "EVENT_LIST_FAILED", err)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "SSE_UNSUPPORTED", errors.New("response writer does not support streaming"), true)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("Connection", "keep-alive")
+	for _, value := range events {
+		encoded, encodeErr := json.Marshal(value)
+		if encodeErr != nil {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", value.Sequence, value.Type, encoded)
+	}
+	_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+	flusher.Flush()
+}
+
+func (a *application) searchRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	if a.search == nil {
+		writeError(w, http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE", errors.New("NIGHTSHIFT_SEARCH_URL is not configured"), true)
+		return
+	}
+	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	page := 1
+	if value := request.URL.Query().Get("page"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_SEARCH_PAGE", err, false)
+			return
+		}
+		page = parsed
+	}
+	limit := 0
+	if value := request.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_SEARCH_LIMIT", err, false)
+			return
+		}
+		limit = parsed
+	}
+	result, err := a.search.Search(request.Context(), search.SearchRequest{Query: query, Page: page, Limit: limit})
+	if err != nil {
+		writeDomainError(w, "SEARCH_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func chatSearchQuery(content string) (string, bool) {
+	trimmed := strings.TrimSpace(content)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"/search ", "search ", "browse "} {
+		if strings.HasPrefix(lower, prefix) {
+			query := strings.TrimSpace(trimmed[len(prefix):])
+			return query, query != ""
+		}
+	}
+	if strings.HasPrefix(lower, "what changed") || strings.HasPrefix(lower, "what's new") {
+		return trimmed, true
+	}
+	return "", false
+}
+
+func formatSearchAnswer(result search.SearchResponse) (string, []chat.Citation) {
+	if len(result.Results) == 0 {
+		return fmt.Sprintf("I searched for %q but found no results.", result.Query), nil
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "Search results for %q:\n\n", result.Query)
+	citations := make([]chat.Citation, 0, len(result.Results))
+	for index, value := range result.Results {
+		fmt.Fprintf(&builder, "%d. %s\n%s\n", index+1, value.Title, value.URL)
+		if value.Snippet != "" {
+			fmt.Fprintf(&builder, "%s\n", value.Snippet)
+		}
+		builder.WriteString("\n")
+		citations = append(citations, chat.Citation{URL: value.URL, Title: value.Title, Source: value.Source, Excerpt: value.Snippet})
+	}
+	return strings.TrimSpace(builder.String()), citations
+}
+
 type sourceRequest struct {
 	ID                  string   `json:"id,omitempty"`
 	Name                string   `json:"name"`
@@ -1035,7 +1382,8 @@ func writeDomainError(w http.ResponseWriter, code string, err error) {
 	status := http.StatusBadRequest
 	if errors.Is(err, profile.ErrProfileNotFound) || errors.Is(err, project.ErrProjectNotFound) ||
 		errors.Is(err, requirement.ErrRequirementNotFound) || errors.Is(err, session.ErrSessionNotFound) ||
-		errors.Is(err, session.ErrDecisionNotFound) {
+		errors.Is(err, session.ErrDecisionNotFound) || errors.Is(err, chat.ErrConversationNotFound) ||
+		errors.Is(err, chat.ErrMessageNotFound) {
 		status = http.StatusNotFound
 	} else if strings.Contains(strings.ToLower(err.Error()), "graph") || strings.Contains(strings.ToLower(err.Error()), "falkor") {
 		status = http.StatusBadGateway
