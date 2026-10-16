@@ -12,7 +12,15 @@ services:
       - key: NIGHTSHIFT_ENV
         value: render
       - key: NIGHTSHIFT_DATA_DIR
-        value: /tmp/nightshift
+        value: /var/lib/nightshift
+      - key: NIGHTSHIFT_AUTH_TOKEN
+        sync: false
+      - key: NIGHTSHIFT_AUTH_TENANT_ID
+        value: tenant_demo
+      - key: NIGHTSHIFT_AUTH_USER_ID
+        value: user_demo
+      - key: NIGHTSHIFT_AUTH_APPROVER_ID
+        value: user_demo
       - key: FALKORDB_URL
         sync: false
       - key: FALKORDB_CONTROL_GRAPH

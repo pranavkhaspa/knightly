@@ -1,10 +1,12 @@
 services:
   falkordb:
-    image: falkordb/falkordb:latest
+    # Keep local/integration behavior reproducible. Update this tag deliberately
+    # and review the graph migration before moving to another FalkorDB release.
+    image: falkordb/falkordb:v4.22.1-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
-      - "3000:3000"
+      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:3000:3000"
     volumes:
       - falkordb-data:/data
     healthcheck:
@@ -31,10 +33,22 @@ services:
       FALKORDB_GRAPH: nightshift_u_demo
       FALKORDB_QUERY_TIMEOUT_MS: 5000
       NIGHTSHIFT_ACTIONS_ENABLED: "false"
+      NIGHTSHIFT_AUTH_TOKEN: ${NIGHTSHIFT_AUTH_TOKEN:-local-compose-token-change-me}
+      NIGHTSHIFT_AUTH_TENANT_ID: ${NIGHTSHIFT_AUTH_TENANT_ID:-tenant_demo}
+      NIGHTSHIFT_AUTH_USER_ID: ${NIGHTSHIFT_AUTH_USER_ID:-user_demo}
+      NIGHTSHIFT_AUTH_APPROVER_ID: ${NIGHTSHIFT_AUTH_APPROVER_ID:-user_demo}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - nightshift-data:/var/lib/nightshift
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/health/live"]
       interval: 10s

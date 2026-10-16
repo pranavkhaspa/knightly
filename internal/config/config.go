@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/pranavkhaspa/knightly/internal/identity"
 )
@@ -23,6 +25,17 @@ type Config struct {
 	DataDir            string
 	QueryTimeoutMillis int
 	ActionsEnabled     bool
+
+	// AuthToken or the username/password pair protects a non-loopback HTTP
+	// listener. The scope and approver are deployment identities, not request
+	// fields; the auth middleware places them in the request context.
+	AuthToken      string
+	AuthUsername   string
+	AuthPassword   string
+	AuthTenantID   string
+	AuthUserID     string
+	AuthApproverID string
+	AuthRequired   bool
 }
 
 func Load() (Config, error) {
@@ -38,6 +51,12 @@ func Load() (Config, error) {
 		UserGraph:          envOr("FALKORDB_GRAPH", "nightshift_u_demo"),
 		DataDir:            envOr("NIGHTSHIFT_DATA_DIR", "./data"),
 		QueryTimeoutMillis: 5000,
+		AuthToken:          os.Getenv("NIGHTSHIFT_AUTH_TOKEN"),
+		AuthUsername:       os.Getenv("NIGHTSHIFT_AUTH_USERNAME"),
+		AuthPassword:       os.Getenv("NIGHTSHIFT_AUTH_PASSWORD"),
+		AuthTenantID:       envOr("NIGHTSHIFT_AUTH_TENANT_ID", "tenant_demo"),
+		AuthUserID:         envOr("NIGHTSHIFT_AUTH_USER_ID", "user_demo"),
+		AuthApproverID:     envOr("NIGHTSHIFT_AUTH_APPROVER_ID", "user_demo"),
 	}
 
 	if value := os.Getenv("FALKORDB_QUERY_TIMEOUT_MS"); value != "" {
@@ -56,14 +75,104 @@ func Load() (Config, error) {
 		c.ActionsEnabled = parsed
 	}
 
-	if c.Listen == "" || c.FalkorURL == "" || c.ControlGraph == "" || c.UserGraph == "" || c.DataDir == "" || c.ProjectID == "" {
-		return Config{}, fmt.Errorf("listen, FalkorDB URL, graph names, and project ID must be non-empty")
-	}
-	if err := (identity.Scope{TenantID: c.TenantID, UserID: c.UserID}).Validate(); err != nil {
-		return Config{}, fmt.Errorf("invalid installation scope: %w", err)
+	if err := c.Validate(); err != nil {
+		return Config{}, err
 	}
 
 	return c, nil
+}
+
+// Validate checks the deployment boundary before any network or graph client
+// is initialized. A non-loopback listener must have a configured bearer token
+// or a complete HTTP Basic credential pair.
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("configuration is required")
+	}
+	if err := validateListen(c.Listen); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.FalkorURL) == "" || strings.TrimSpace(c.ControlGraph) == "" || strings.TrimSpace(c.UserGraph) == "" || strings.TrimSpace(c.DataDir) == "" || strings.TrimSpace(c.ProjectID) == "" {
+		return fmt.Errorf("FalkorDB URL, graph names, data directory, and project ID must be non-empty")
+	}
+	if err := (identity.Scope{TenantID: strings.TrimSpace(c.TenantID), UserID: strings.TrimSpace(c.UserID)}).Validate(); err != nil {
+		return fmt.Errorf("invalid installation scope: %w", err)
+	}
+
+	if (strings.TrimSpace(c.AuthUsername) == "") != (strings.TrimSpace(c.AuthPassword) == "") {
+		return fmt.Errorf("NIGHTSHIFT_AUTH_USERNAME and NIGHTSHIFT_AUTH_PASSWORD must be set together")
+	}
+	if err := validateSecret("NIGHTSHIFT_AUTH_TOKEN", c.AuthToken); err != nil {
+		return err
+	}
+	if err := validateSecret("NIGHTSHIFT_AUTH_USERNAME", c.AuthUsername); err != nil {
+		return err
+	}
+	if err := validateSecret("NIGHTSHIFT_AUTH_PASSWORD", c.AuthPassword); err != nil {
+		return err
+	}
+	c.AuthTenantID = strings.TrimSpace(c.AuthTenantID)
+	c.AuthUserID = strings.TrimSpace(c.AuthUserID)
+	c.AuthApproverID = strings.TrimSpace(c.AuthApproverID)
+	if err := identity.ValidateID("NIGHTSHIFT_AUTH_TENANT_ID", c.AuthTenantID); err != nil {
+		return err
+	}
+	if err := identity.ValidateID("NIGHTSHIFT_AUTH_USER_ID", c.AuthUserID); err != nil {
+		return err
+	}
+	if err := identity.ValidateID("NIGHTSHIFT_AUTH_APPROVER_ID", c.AuthApproverID); err != nil {
+		return err
+	}
+
+	c.AuthRequired = !ListenIsLoopback(c.Listen)
+	if c.AuthRequired && !c.authConfigured() {
+		return fmt.Errorf("non-loopback NIGHTSHIFT_LISTEN requires NIGHTSHIFT_AUTH_TOKEN or a complete NIGHTSHIFT_AUTH_USERNAME/NIGHTSHIFT_AUTH_PASSWORD pair")
+	}
+	return nil
+}
+
+// ListenIsLoopback reports whether an HTTP listener is explicitly restricted
+// to the local host. Empty-host listeners such as :8080 intentionally return
+// false because they normally expose every interface.
+func ListenIsLoopback(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil || host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func (c Config) authConfigured() bool {
+	return strings.TrimSpace(c.AuthToken) != "" || (strings.TrimSpace(c.AuthUsername) != "" && strings.TrimSpace(c.AuthPassword) != "")
+}
+
+func validateListen(listen string) error {
+	if strings.TrimSpace(listen) == "" {
+		return fmt.Errorf("NIGHTSHIFT_LISTEN must be a host:port address")
+	}
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "" {
+		return fmt.Errorf("NIGHTSHIFT_LISTEN must be a host:port address")
+	}
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil || parsedPort < 0 || parsedPort > 65535 {
+		return fmt.Errorf("NIGHTSHIFT_LISTEN port must be between 0 and 65535")
+	}
+	return nil
+}
+
+func validateSecret(label, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("%s must not contain a newline", label)
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

@@ -18,7 +18,9 @@ The source tests cover bounded item limits, canceled requests, non-success
 responses, malformed feeds, oversized bodies, and recovery of the pipeline on a
 later source run. The action tests cover approval enforcement, persisted
 provider failure, explicit re-approval, successful retry, and completed-action
-replay without a second executor call.
+replay without a second executor call. The auth/config tests cover loopback
+defaults, rejection of unauthenticated non-loopback binds, token and Basic
+authentication, trusted scope/approver context, and security headers.
 
 ## Concurrency evidence
 

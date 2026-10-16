@@ -32,7 +32,10 @@ relationships that make those behaviors possible.
 - Go modular monolith; no mandatory Node.js or Python runtime.
 - FalkorDB is the only durable application state store.
 - One named control graph plus isolated named user graphs.
-- Localhost-only HTTP default.
+- Localhost-only HTTP default; non-loopback binds are rejected unless token or
+  username/password authentication is configured.
+- Scope and approval identity come from trusted deployment configuration; HTTP
+  clients cannot select a tenant, user, or approver with request fields.
 - External actions disabled by configuration and rejected by validation.
 - `/health/live` stays available while FalkorDB is unavailable; `/health/ready`
   returns a diagnostic `503` until graph connectivity is healthy.
@@ -49,7 +52,7 @@ evolving memory → graph-backed Relevance/Planner handoff.
 
 ## Requirements
 
-- Go 1.27 or newer
+- Go 1.27
 - FalkorDB 1.0+ reachable through its Redis-compatible endpoint
 - Docker is optional and only used for local FalkorDB development
 
@@ -66,6 +69,10 @@ docker compose -f deploy/docker/compose.yaml up -d falkordb
 go mod download
 go run ./cmd/nightshift
 ```
+
+The checked-in Compose service binds its published ports to host loopback. It
+uses a development-only token unless `NIGHTSHIFT_AUTH_TOKEN` is set in `.env`;
+replace that value before exposing the service beyond a local workstation.
 
 In another terminal:
 
@@ -108,11 +115,22 @@ loader. Important settings:
 | `FALKORDB_QUERY_TIMEOUT_MS` | bounded Cypher query timeout | `5000` |
 | `NIGHTSHIFT_DATA_DIR` | local approved-plan artifact directory | `./data` |
 | `NIGHTSHIFT_ACTIONS_ENABLED` | approval-gated local plan execution | `false` |
+| `NIGHTSHIFT_AUTH_TOKEN` | bearer credential for a non-loopback bind | unset |
+| `NIGHTSHIFT_AUTH_USERNAME` / `NIGHTSHIFT_AUTH_PASSWORD` | Basic credential alternative to the token | unset |
+| `NIGHTSHIFT_AUTH_TENANT_ID` / `NIGHTSHIFT_AUTH_USER_ID` | trusted graph scope attached by auth middleware | `tenant_demo` / `user_demo` |
+| `NIGHTSHIFT_AUTH_APPROVER_ID` | trusted actor recorded for approvals | `user_demo` |
 
 Do not put credentials in graph names, URLs returned by the API, logs, source
 fixtures, screenshots, or committed files. The only local artifact written by
 the current action executor is an explicitly approved Markdown plan; its
 action state and idempotency record remain in FalkorDB.
+
+For a non-loopback bind, set either `NIGHTSHIFT_AUTH_TOKEN` or both Basic
+credential variables. Use a high-entropy secret from a secret manager in
+production. The auth middleware must be wired around the route handler; it
+attaches the configured scope and approver to request context and ignores
+client-supplied scope or `approved_by` values. See
+[`docs/deployment.md`](docs/deployment.md) for the integration contract.
 
 ## Demo flow
 
@@ -173,14 +191,14 @@ The integration suite uses unique temporary graph names, verifies graph-backed
 ingestion/evidence, action idempotency, and concurrent lease completion, then
 deletes those graphs. Set `FALKORDB_URL` when FalkorDB is remote.
 
-## Evidence boundary
+## Evidence status
 
-The automated checks provide pass/fail evidence for bounded source failures,
-failure recovery, approval-gated action retries, graph evidence persistence,
-and exactly-once lease behavior. `make concurrency-evidence` repeats the
-32-caller in-memory coordination harness 100 times with the race detector.
-The opt-in integration command is the evidence path for a live FalkorDB rather
-than a mock.
+Measured by automated checks: bounded source failures, failure recovery,
+approval-gated action retries, graph evidence persistence, exactly-once lease
+behavior, and the auth/configuration boundaries covered by the unit tests.
+`make concurrency-evidence` repeats the 32-caller in-memory coordination
+harness 100 times with the race detector. The opt-in integration command is the
+evidence path for a live FalkorDB rather than a mock.
 
 No performance number is claimed here for memory, CPU, startup time, dashboard
 latency, or a particular ARM/old-PC class. Those PRD targets remain unmeasured
@@ -211,16 +229,18 @@ remote when the device does not have enough memory for the graph server.
 
 Run the binary and FalkorDB on a private network, or run the binary with a
 remote FalkorDB endpoint. The systemd unit in
-`deploy/systemd/nightshift.service` is a starting point; add a protected
-environment file and an unprivileged service account before production use.
+`deploy/systemd/nightshift.service` creates a `0700` state directory, uses an
+unprivileged service account, and expects a protected environment file. Keep
+the daemon on loopback and put HTTPS authentication/TLS in a reverse proxy.
 
 ### Render
 
 `deploy/render.yaml` deploys the web daemon as a stateless service. Configure
-`FALKORDB_URL` as a Render secret pointing to FalkorDB Cloud or a private
-FalkorDB endpoint. Do not rely on the Render filesystem for durable product
-state. Multiple instances must share the same FalkorDB deployment; scheduler
-leadership and task leases use the graph-backed coordination contract.
+`FALKORDB_URL` and `NIGHTSHIFT_AUTH_TOKEN` as Render secrets pointing to a
+reachable FalkorDB endpoint and a high-entropy HTTP credential. Do not rely on
+the Render filesystem for durable product state. Multiple instances must share
+the same FalkorDB deployment; scheduler leadership and task leases use the
+graph-backed coordination contract.
 
 The full install, systemd environment file, multiple-instance guidance, and
 portable binary matrix are in `docs/deployment.md`.
