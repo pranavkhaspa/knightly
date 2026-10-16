@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dbclient "github.com/FalkorDB/falkordb-go/v2"
+	"github.com/pranavkhaspa/knightly/internal/identity"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -126,9 +127,9 @@ func (c *Client) Initialize() error {
 	if _, err := c.control.Query(`
 		MERGE (s:Schema {id: "nightshift"})
 		SET s.version = "0.1-foundation", s.updated_at = timestamp()
-		MERGE (mapping:UserGraph {user_id: $user_id})
+		MERGE (mapping:UserGraph {tenant_id: $tenant_id, user_id: $user_id})
 		SET mapping.graph_name = $graph_name, mapping.updated_at = timestamp()
-	`, map[string]interface{}{"user_id": demoUserID, "graph_name": c.userName}, c.options()); err != nil {
+	`, map[string]interface{}{"tenant_id": "tenant_demo", "user_id": demoUserID, "graph_name": c.userName}, c.options()); err != nil {
 		return fmt.Errorf("initialize control graph: %w", err)
 	}
 
@@ -137,17 +138,20 @@ func (c *Client) Initialize() error {
 		SET u.tenant_id = $tenant_id, u.display_name = $display_name,
 		    u.updated_at = timestamp()
 		MERGE (p:Project {id: $project_id})
-		SET p.name = $project_name, p.status = "active", p.updated_at = timestamp()
+		SET p.tenant_id = $tenant_id, p.user_id = $user_id,
+		    p.name = $project_name, p.status = "active", p.updated_at = timestamp()
 		MERGE (u)-[:OWNS]->(p)
 		MERGE (interest:Interest {id: $interest_id})
 		SET interest.name = "Graph-powered agents", interest.normalized_name = "graph agents"
 		MERGE (u)-[:INTERESTED_IN]->(interest)
 		MERGE (r:Requirement {id: $requirement_id})
-		SET r.title = "Use connected context for explainable recommendations",
+		SET r.tenant_id = $tenant_id, r.user_id = $user_id,
+		    r.title = "Use connected context for explainable recommendations",
 		    r.status = "open", r.priority = 1
 		MERGE (p)-[:HAS_REQUIREMENT]->(r)
 		MERGE (tech:Technology {id: $technology_id})
-		SET tech.name = "FalkorDB", tech.normalized_name = "falkordb", tech.category = "graph database"
+		SET tech.tenant_id = $tenant_id, tech.user_id = $user_id,
+		    tech.name = "FalkorDB", tech.normalized_name = "falkordb", tech.category = "graph database"
 		MERGE (r)-[:NEEDS]->(tech)
 	`, map[string]interface{}{
 		"user_id":        demoUserID,
@@ -164,8 +168,23 @@ func (c *Client) Initialize() error {
 	return nil
 }
 
+var _ UserGraphSelector = (*Client)(nil)
+
+func (c *Client) SelectUserGraphFor(ctx context.Context, tenantID, userID string) (*dbclient.Graph, error) {
+	return c.SelectUserGraph(ctx, identity.Scope{TenantID: tenantID, UserID: userID})
+}
+
 func (c *Client) options() *dbclient.QueryOptions {
 	return dbclient.NewQueryOptions().SetTimeout(c.queryTimeout)
+}
+
+// QueryOptions lets routed repositories reuse the configured bounded query
+// timeout without exposing the FalkorDB client itself to domain packages.
+func (c *Client) QueryOptions() *dbclient.QueryOptions {
+	if c == nil {
+		return dbclient.NewQueryOptions()
+	}
+	return c.options()
 }
 
 func recordValue(record interface {

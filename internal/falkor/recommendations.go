@@ -55,7 +55,8 @@ MERGE (requirement:Requirement {id: $requirement_id})
 MERGE (recommendation)-[:MATCHES]->(requirement)
 MERGE (evidence:Evidence {id: $evidence_id})
 SET evidence.source_id = $source_id,
-    evidence.item_id = $item_id,
+	 evidence.user_id = $user_id,
+	 evidence.item_id = $item_id,
     evidence.url = $evidence_url,
     evidence.excerpt = $evidence_excerpt,
     evidence.evidence_kind = $evidence_kind,

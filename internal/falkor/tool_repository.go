@@ -71,9 +71,9 @@ func (r *ToolCallRepository) linkToolCall(ctx context.Context, call mcp.ToolCall
 	if call.SessionID != "" {
 		if _, err := r.client.user.Query(`
 			MATCH (tc:ToolCall {id: $tool_call_id})
-			MATCH (s:Session {id: $session_id})
+			MATCH (s:Session {id: $session_id, user_id: $user_id})
 			MERGE (s)-[:CONTAINS]->(tc)
-		`, map[string]interface{}{"tool_call_id": call.ID, "session_id": call.SessionID}, r.client.options()); err != nil {
+		`, map[string]interface{}{"tool_call_id": call.ID, "session_id": call.SessionID, "user_id": call.UserID}, r.client.options()); err != nil {
 			return fmt.Errorf("link tool call session in graph: %w", err)
 		}
 	}

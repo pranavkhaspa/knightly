@@ -178,7 +178,7 @@ func (r *MemoryRepository) saveEvidenceLinks(ctx context.Context, item memory.Me
 	_, err := r.client.user.Query(`
 		UNWIND $evidence_ids AS evidence_id
 		MATCH (m:Memory {id: $id, user_id: $user_id})
-		MATCH (e:Evidence {id: evidence_id})
+		MATCH (e:Evidence {id: evidence_id, user_id: $user_id})
 		MERGE (m)-[:DERIVED_FROM]->(e)
 	`, map[string]interface{}{
 		"evidence_ids": item.EvidenceIDs,

@@ -34,11 +34,14 @@ raw email address, display name, token, or user-provided string in a graph
 name. Every user-owned node also carries `tenant_id` or `user_id` for
 defense-in-depth query filtering.
 
-`internal/falkor.UserGraphName` implements the stable hashed naming rule. The
-single-user installation currently accepts `FALKORDB_GRAPH` explicitly, while
-the control graph records the demo user's graph mapping. A multi-user host can
-instantiate one graph client per mapped graph without changing the domain
-repositories or allowing a request to choose an arbitrary graph name.
+`internal/falkor.UserGraphName` implements the stable hashed naming rule.
+`Client.EnsureUserGraph` writes a mapping derived from the authenticated
+tenant/user scope, and `Client.SelectUserGraph` resolves that mapping from the
+control graph. The routed profile, project, requirement, session, and decision
+repositories accept the scope only; they never accept a request-supplied graph
+name. The existing single-user `FALKORDB_GRAPH` client remains compatible with
+the demo bootstrap, while setup/integration code can use the routed
+repositories for additional users.
 
 ## Critical path invariant
 
