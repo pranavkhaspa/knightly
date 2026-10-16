@@ -1,6 +1,6 @@
 APP := nightshift
 
-.PHONY: fmt test vet build run graph-up graph-down smoke
+.PHONY: fmt test vet build build-linux run graph-up graph-down smoke
 
 fmt:
 	go fmt ./...
@@ -13,6 +13,11 @@ vet:
 
 build:
 	go build -trimpath -o bin/$(APP) ./cmd/nightshift
+
+build-linux:
+	mkdir -p dist
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/$(APP)-linux-amd64 ./cmd/nightshift
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/$(APP)-linux-arm64 ./cmd/nightshift
 
 run:
 	go run ./cmd/nightshift

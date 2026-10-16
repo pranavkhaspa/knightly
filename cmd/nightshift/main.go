@@ -92,6 +92,7 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("GET /health/live", a.live)
 	mux.HandleFunc("GET /health/ready", a.ready)
 	mux.HandleFunc("GET /api/v1/status", a.status)
+	mux.HandleFunc("GET /api/v1/dashboard", a.dashboard)
 	mux.Handle("GET /", web.Handler())
 	return requestID(mux)
 }
@@ -131,6 +132,20 @@ func (a *application) status(w http.ResponseWriter, request *http.Request) {
 		Graph:        a.graph.Status(ctx),
 		Actions:      a.config.ActionsEnabled,
 	})
+}
+
+func (a *application) dashboard(w http.ResponseWriter, request *http.Request) {
+	ctx, cancel := falkor.ReadinessContext(request.Context())
+	defer cancel()
+	dashboard, err := a.graph.Dashboard(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":  "dashboard_unavailable",
+			"detail": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, dashboard)
 }
 
 func requestID(next http.Handler) http.Handler {

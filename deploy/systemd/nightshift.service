@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=nightshift
 Group=nightshift
+EnvironmentFile=-/etc/nightshift/nightshift.env
 ExecStart=/usr/local/bin/nightshift
 Restart=on-failure
 RestartSec=5s
@@ -14,6 +15,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target

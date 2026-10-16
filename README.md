@@ -35,6 +35,8 @@ relationships that make those behaviors possible.
 - Localhost-only HTTP default.
 - External actions disabled by configuration and rejected by validation.
 - Health endpoints work even while FalkorDB is unavailable.
+- A framework-free dashboard shows the active graph path and persisted task
+  status when FalkorDB is available.
 - Deterministic mode is the baseline; an LLM is optional and not yet wired.
 
 The next vertical slice is public RSS/GitHub fixture ingestion → graph
@@ -67,6 +69,7 @@ In another terminal:
 curl -fsS http://127.0.0.1:8080/health/live
 curl -i http://127.0.0.1:8080/health/ready
 curl -fsS http://127.0.0.1:8080/api/v1/status
+curl -fsS http://127.0.0.1:8080/api/v1/dashboard
 ```
 
 Open <http://127.0.0.1:8080/> to see the embedded status page. The first
@@ -90,6 +93,7 @@ loader. Important settings:
 | Variable | Purpose | Safe default |
 |---|---|---|
 | `NIGHTSHIFT_LISTEN` | HTTP bind address | `127.0.0.1:8080` |
+| `NIGHTSHIFT_INSTANCE_ID` | stable owner/status identity; falls back to `HOSTNAME` | `local-dev` on a host |
 | `FALKORDB_URL` | `redis://`, `rediss://`, `falkor://`, or `falkors://` URL | local FalkorDB |
 | `FALKORDB_CONTROL_GRAPH` | deployment/control metadata graph | `nightshift_control` |
 | `FALKORDB_GRAPH` | user-owned graph for this installation | `nightshift_u_demo` |
@@ -148,7 +152,10 @@ environment file and an unprivileged service account before production use.
 `FALKORDB_URL` as a Render secret pointing to FalkorDB Cloud or a private
 FalkorDB endpoint. Do not rely on the Render filesystem for durable product
 state. Multiple instances must share the same FalkorDB deployment; scheduler
-leadership and task leases will be graph-backed in the coordination slice.
+leadership and task leases use the graph-backed coordination contract.
+
+The full install, systemd environment file, multiple-instance guidance, and
+portable binary matrix are in `docs/deployment.md`.
 
 ## Hackathon positioning
 

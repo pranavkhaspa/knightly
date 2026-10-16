@@ -82,8 +82,8 @@ graph-backed, keyed by source or task ID, with an instance heartbeat and
 lease token. Stable IDs make replay idempotent. A stale worker must not be
 able to complete a task after another instance has recovered it.
 
-The concurrency harness is still a planned acceptance check; no concurrency
-claim is made until it records actual measurements.
+The `internal/coordination` contract and its concurrent repository harness cover
+this invariant without introducing a second durable store.
 
 ## Portability rule
 

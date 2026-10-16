@@ -7,6 +7,7 @@ func TestLoadDefaultsToSafeLocalConfiguration(t *testing.T) {
 		"NIGHTSHIFT_LISTEN",
 		"NIGHTSHIFT_ENV",
 		"NIGHTSHIFT_INSTANCE_ID",
+		"HOSTNAME",
 		"FALKORDB_URL",
 		"FALKORDB_CONTROL_GRAPH",
 		"FALKORDB_GRAPH",
@@ -25,6 +26,20 @@ func TestLoadDefaultsToSafeLocalConfiguration(t *testing.T) {
 	}
 	if c.ActionsEnabled {
 		t.Fatal("external actions must default to disabled")
+	}
+	if c.InstanceID == "" {
+		t.Fatal("instance ID must have a non-empty fallback")
+	}
+}
+
+func TestLoadUsesExplicitInstanceID(t *testing.T) {
+	t.Setenv("NIGHTSHIFT_INSTANCE_ID", "vps-worker-02")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.InstanceID != "vps-worker-02" {
+		t.Fatalf("InstanceID = %q, want explicit value", c.InstanceID)
 	}
 }
 

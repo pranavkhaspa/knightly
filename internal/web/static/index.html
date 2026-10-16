@@ -3,28 +3,146 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NightShift · FalkorDB-first agent</title>
+    <title>NightShift · graph dashboard</title>
     <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-      body { max-width: 760px; margin: 4rem auto; padding: 0 1.25rem; background: #10131a; color: #edf2f7; }
-      main { border: 1px solid #303746; border-radius: 14px; padding: 2rem; background: #171c25; }
-      h1 { margin-top: 0; }
-      code { color: #8be9fd; }
-      .status { margin-top: 1.5rem; padding: 1rem; border-radius: 10px; background: #0e1117; white-space: pre-wrap; }
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --bg: #0b1020;
+        --panel: #121a2b;
+        --panel-soft: #17223a;
+        --line: #293957;
+        --text: #eef4ff;
+        --muted: #9eacc6;
+        --accent: #7dd3fc;
+        --good: #86efac;
+        --warn: #fcd34d;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; background: radial-gradient(circle at top, #17213b 0, var(--bg) 48rem); color: var(--text); }
+      main { max-width: 1120px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 2rem; }
+      h1, h2, p { margin-top: 0; }
+      h1 { margin-bottom: .45rem; letter-spacing: -.04em; }
+      h2 { margin-bottom: 1rem; font-size: 1rem; }
+      p { color: var(--muted); line-height: 1.55; }
+      .eyebrow { margin-bottom: .5rem; color: var(--accent); font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+      .badge { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--line); border-radius: 999px; padding: .45rem .7rem; color: var(--muted); font-size: .8rem; white-space: nowrap; }
+      .badge::before { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn); content: ""; }
+      .badge.ready::before { background: var(--good); }
+      .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+      .panel { border: 1px solid var(--line); border-radius: 16px; padding: 1.15rem; background: var(--panel); box-shadow: 0 12px 35px #0003; }
+      .wide { grid-column: span 2; }
+      .metric { font-size: 1.6rem; font-weight: 750; letter-spacing: -.03em; }
+      .label { margin-bottom: .35rem; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+      .subtle { color: var(--muted); font-size: .9rem; }
+      .path { display: flex; align-items: stretch; gap: .6rem; overflow-x: auto; padding: .25rem 0 .45rem; }
+      .node { min-width: 150px; border: 1px solid #365276; border-radius: 12px; padding: .8rem; background: var(--panel-soft); }
+      .node-type { color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .node-name { margin-top: .35rem; font-weight: 700; }
+      .node-detail { margin-top: .3rem; color: var(--muted); font-size: .8rem; }
+      .arrow { align-self: center; color: var(--accent); font-size: 1.25rem; }
+      .task { display: grid; grid-template-columns: 1fr auto; gap: .4rem 1rem; border-top: 1px solid var(--line); padding: .8rem 0; }
+      .task:first-child { border-top: 0; padding-top: 0; }
+      .task-title { font-weight: 650; }
+      .task-meta { color: var(--muted); font-size: .82rem; }
+      .task-status { align-self: start; border: 1px solid var(--line); border-radius: 999px; padding: .25rem .55rem; color: var(--good); font-size: .75rem; }
+      .empty { border: 1px dashed var(--line); border-radius: 10px; padding: 1rem; color: var(--muted); }
+      .error { border-color: #854d0e; background: #422006; color: #fde68a; }
+      code { color: var(--accent); }
+      @media (max-width: 760px) { header { display: block; } .badge { margin-top: 1rem; } .grid { grid-template-columns: 1fr; } .wide { grid-column: auto; } }
     </style>
   </head>
   <body>
     <main>
-      <h1>NightShift</h1>
-      <p>A lightweight developer intern whose durable context lives in <strong>FalkorDB</strong>.</p>
-      <p>This foundation exposes the graph health surface. The next vertical slice adds source ingestion, graph-backed relevance, evidence paths, and evolving memory.</p>
-      <div class="status" id="status">Loading graph status…</div>
+      <header>
+        <div>
+          <div class="eyebrow">FalkorDB-first developer intern</div>
+          <h1>NightShift</h1>
+          <p>See the active project, the graph path behind it, and persisted agent work from one lightweight dashboard.</p>
+        </div>
+        <div class="badge" id="service-badge">Checking service…</div>
+      </header>
+
+      <section class="grid" aria-live="polite">
+        <article class="panel">
+          <div class="label">Service</div>
+          <div class="metric" id="service-value">—</div>
+          <div class="subtle" id="service-detail">Loading status</div>
+        </article>
+        <article class="panel">
+          <div class="label">Graph</div>
+          <div class="metric" id="graph-value">—</div>
+          <div class="subtle" id="graph-detail">Loading FalkorDB</div>
+        </article>
+        <article class="panel">
+          <div class="label">Recent tasks</div>
+          <div class="metric" id="task-count">—</div>
+          <div class="subtle">Persisted in the user graph</div>
+        </article>
+
+        <article class="panel wide">
+          <h2>Graph path</h2>
+          <div id="path" class="path"><div class="empty">Loading the graph path…</div></div>
+          <p class="subtle" id="path-caption">The path is returned by FalkorDB; it is not generated by the browser.</p>
+        </article>
+        <article class="panel">
+          <h2>Active project</h2>
+          <div class="metric" id="project-name">—</div>
+          <div class="subtle" id="project-detail">Loading project context</div>
+        </article>
+
+        <article class="panel wide">
+          <h2>Agent task status</h2>
+          <div id="tasks"><div class="empty">Loading tasks…</div></div>
+        </article>
+        <article class="panel">
+          <h2>What this means</h2>
+          <p>The graph is the source of truth for project context and task state. When the graph is offline, the service remains live and this page shows the connection failure.</p>
+          <p class="subtle">API: <code>/api/v1/dashboard</code></p>
+        </article>
+      </section>
     </main>
     <script>
-      fetch('/api/v1/status')
-        .then(response => response.json())
-        .then(status => { document.querySelector('#status').textContent = JSON.stringify(status, null, 2); })
-        .catch(error => { document.querySelector('#status').textContent = 'Status unavailable: ' + error; });
+      const text = (value, fallback = '—') => value || fallback;
+      const escapeHTML = value => String(value).replace(/[&<>'"]/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
+
+      async function loadDashboard() {
+        const [statusResponse, dashboardResponse] = await Promise.all([
+          fetch('/api/v1/status'),
+          fetch('/api/v1/dashboard')
+        ]);
+        const status = await statusResponse.json();
+        document.querySelector('#service-value').textContent = text(status.service);
+        document.querySelector('#service-detail').textContent = `${text(status.instance_id)} · up ${text(status.uptime)}`;
+        const graph = status.graph || {};
+        document.querySelector('#graph-value').textContent = graph.available ? 'Connected' : 'Offline';
+        document.querySelector('#graph-detail').textContent = graph.available ? `${graph.node_count || 0} nodes · ${graph.relationship_count || 0} relationships` : text(graph.error, 'Waiting for FalkorDB');
+        const badge = document.querySelector('#service-badge');
+        badge.textContent = graph.available ? 'Graph connected' : 'Graph unavailable';
+        badge.classList.toggle('ready', graph.available);
+
+        if (!dashboardResponse.ok) throw new Error(`Dashboard request returned ${dashboardResponse.status}`);
+        const dashboard = await dashboardResponse.json();
+        const project = dashboard.project || {};
+        document.querySelector('#project-name').textContent = text(project.name, 'No project');
+        document.querySelector('#project-detail').textContent = project.id ? `${project.id} · ${text(project.status, 'unknown status')}` : 'Create or seed a project in FalkorDB';
+
+        const path = dashboard.graph_path || [];
+        const pathElement = document.querySelector('#path');
+        pathElement.innerHTML = path.length ? path.map((node, index) => `${index ? '<div class="arrow" aria-hidden="true">→</div>' : ''}<div class="node"><div class="node-type">${escapeHTML(node.type)}</div><div class="node-name">${escapeHTML(text(node.name, node.id))}</div><div class="node-detail">${escapeHTML(text(node.detail, node.id))}</div></div>`).join('') : '<div class="empty">No connected graph path yet. The project can exist before an item is related to it.</div>';
+        document.querySelector('#path-caption').textContent = path.length ? 'Project context currently resolves through the connected requirement and technology nodes in FalkorDB.' : 'Add a connected requirement path before presenting a recommendation.';
+
+        const tasks = dashboard.tasks || [];
+        document.querySelector('#task-count').textContent = tasks.length;
+        const tasksElement = document.querySelector('#tasks');
+        tasksElement.innerHTML = tasks.length ? tasks.map(task => `<div class="task"><div><div class="task-title">${escapeHTML(text(task.title, task.id))}</div><div class="task-meta">${escapeHTML(text(task.agent, 'Unassigned'))} · ${escapeHTML(text(task.id))}</div></div><div class="task-status">${escapeHTML(text(task.status, 'pending'))}</div></div>`).join('') : '<div class="empty">No agent tasks have been persisted yet.</div>';
+      }
+
+      loadDashboard().catch(error => {
+        document.querySelector('#service-badge').textContent = 'Dashboard unavailable';
+        document.querySelector('#path').innerHTML = `<div class="empty error">${escapeHTML(error.message)}. Check <code>/health/ready</code> and the FalkorDB connection.</div>`;
+      });
     </script>
   </body>
 </html>
