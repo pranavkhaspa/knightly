@@ -10,6 +10,8 @@
 | `Requirement` | a structured project need |
 | `Technology` | a named tool, framework, model, or platform |
 | `Source` | an approved public feed or API |
+| `SourceCursor` | conditional HTTP cursor and last collection timestamps |
+| `SourceRun` | bounded source attempt, outcome, counts, and error |
 | `Item` | a normalized public signal |
 | `Recommendation` | a graph-supported candidate suggestion |
 | `Evidence` | source or observation supporting a conclusion |
@@ -31,6 +33,8 @@ User -[:OWNS]-> Project
 Project -[:HAS_REQUIREMENT]-> Requirement
 Requirement -[:NEEDS]-> Technology
 Item -[:FROM]-> Source
+Source -[:HAS_CURSOR]-> SourceCursor
+Source -[:HAS_RUN]-> SourceRun
 Item -[:MENTIONS]-> Technology
 Item -[:ABOUT]-> Interest
 Item -[:RELATES_TO]-> Project

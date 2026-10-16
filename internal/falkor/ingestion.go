@@ -18,6 +18,8 @@ SET source.name = $name,
     source.url = $url,
     source.enabled = $enabled,
     source.trust_score = $trust_score,
+    source.poll_interval_seconds = $poll_interval_seconds,
+    source.max_items = $max_items,
     source.technology_hints = $technology_hints,
     source.interest_hints = $interest_hints,
     source.updated_at = timestamp()
@@ -66,18 +68,33 @@ func (c *Client) UpsertSource(ctx context.Context, source ingestion.SourceConfig
 	if c == nil || c.user == nil {
 		return errors.New("FalkorDB user graph is not configured")
 	}
-	if strings.TrimSpace(source.ID) == "" || strings.TrimSpace(source.Name) == "" || strings.TrimSpace(source.URL) == "" {
-		return errors.New("source ID, name, and URL are required")
+	normalized, err := ingestion.NewNormalizer(ingestion.DefaultLimits()).NormalizeSource(source)
+	if err != nil {
+		return fmt.Errorf("normalize source %q: %w", source.ID, err)
 	}
-	_, err := c.user.Query(SourceUpsertQuery, map[string]interface{}{
-		"source_id":        source.ID,
-		"name":             source.Name,
-		"kind":             source.Kind,
-		"url":              source.URL,
-		"enabled":          source.Enabled,
-		"trust_score":      source.TrustScore,
-		"technology_hints": source.TechnologyHints,
-		"interest_hints":   source.InterestHints,
+	source = normalized
+	pollIntervalSeconds := int64(source.PollInterval / time.Second)
+	if pollIntervalSeconds <= 0 {
+		pollIntervalSeconds = int64(ingestion.DefaultSourcePollInterval / time.Second)
+	}
+	maxItems := source.MaxItems
+	if maxItems <= 0 {
+		maxItems = ingestion.DefaultSourceMaxItems
+	}
+	if maxItems > 100 {
+		maxItems = 100
+	}
+	_, err = c.user.Query(SourceUpsertQuery, map[string]interface{}{
+		"source_id":             source.ID,
+		"name":                  source.Name,
+		"kind":                  source.Kind,
+		"url":                   source.URL,
+		"enabled":               source.Enabled,
+		"trust_score":           source.TrustScore,
+		"poll_interval_seconds": pollIntervalSeconds,
+		"max_items":             maxItems,
+		"technology_hints":      source.TechnologyHints,
+		"interest_hints":        source.InterestHints,
 	}, c.options())
 	if err != nil {
 		return fmt.Errorf("upsert source %q: %w", source.ID, err)

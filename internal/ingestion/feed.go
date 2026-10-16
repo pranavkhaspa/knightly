@@ -79,6 +79,8 @@ type SourceConfig struct {
 	URL             string
 	Enabled         bool
 	TrustScore      float64
+	PollInterval    time.Duration
+	MaxItems        int
 	TechnologyHints []string
 	InterestHints   []string
 }
@@ -137,6 +139,15 @@ func (n Normalizer) NormalizeSource(source SourceConfig) (SourceConfig, error) {
 	source.Kind = normalizeText(source.Kind)
 	if source.Kind == "" {
 		source.Kind = "feed"
+	}
+	if source.PollInterval <= 0 {
+		source.PollInterval = DefaultSourcePollInterval
+	}
+	if source.MaxItems <= 0 {
+		source.MaxItems = DefaultSourceMaxItems
+	}
+	if source.MaxItems > hardMaxItems {
+		source.MaxItems = hardMaxItems
 	}
 	if source.Name == "" {
 		return SourceConfig{}, errors.New("source name is required")

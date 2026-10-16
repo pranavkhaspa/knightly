@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -25,16 +26,32 @@ type RSSSource struct {
 	UserAgent string
 }
 
+var _ SourceAdapter = RSSSource{}
+
 func (s RSSSource) Config() SourceConfig { return s.Source }
 
 func (s RSSSource) Fetch(ctx context.Context, maxItems int) ([]RawItem, error) {
-	body, err := s.fetch(ctx)
+	result, err := s.FetchWithCursor(ctx, SourceCursor{SourceID: s.Source.ID}, maxItems)
 	if err != nil {
 		return nil, err
 	}
+	return result.Items, nil
+}
+
+func (s RSSSource) FetchWithCursor(ctx context.Context, cursor SourceCursor, maxItems int) (FetchResult, error) {
+	body, nextCursor, notModified, err := s.fetch(ctx, cursor, []string{"application/rss+xml", "application/atom+xml", "application/xml", "text/xml"})
+	if err != nil {
+		return FetchResult{}, err
+	}
+	if notModified {
+		return FetchResult{Cursor: nextCursor, NotModified: true}, nil
+	}
 	var feed xmlFeed
 	if err := xml.Unmarshal(body, &feed); err != nil {
-		return nil, fmt.Errorf("decode RSS/Atom feed: %w", err)
+		return FetchResult{}, fmt.Errorf("decode RSS/Atom feed: %w", err)
+	}
+	if maxItems < 0 {
+		maxItems = 0
 	}
 	items := make([]RawItem, 0, maxItems)
 	for _, item := range feed.Channel.Items {
@@ -42,7 +59,7 @@ func (s RSSSource) Fetch(ctx context.Context, maxItems int) ([]RawItem, error) {
 			break
 		}
 		items = append(items, RawItem{
-			ExternalID:   item.GUID,
+			ExternalID:   firstNonEmpty(item.GUID, item.Link),
 			URL:          firstLink(item.Link, item.GUID),
 			Title:        item.Title,
 			Summary:      item.Description,
@@ -65,30 +82,51 @@ func (s RSSSource) Fetch(ctx context.Context, maxItems int) ([]RawItem, error) {
 			Interests:    append([]string(nil), s.Source.InterestHints...),
 		})
 	}
-	return items, nil
+	return FetchResult{Items: items, Cursor: nextCursor}, nil
 }
 
-func (s RSSSource) fetch(ctx context.Context) ([]byte, error) {
+func (s RSSSource) fetch(ctx context.Context, cursor SourceCursor, contentTypes []string) ([]byte, SourceCursor, bool, error) {
 	client := s.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Source.URL, nil)
 	if err != nil {
-		return nil, err
+		return nil, cursor, false, err
 	}
 	userAgent := s.UserAgent
 	if userAgent == "" {
 		userAgent = defaultUserAgent
 	}
 	request.Header.Set("User-Agent", userAgent)
+	if cursor.ETag != "" {
+		request.Header.Set("If-None-Match", cursor.ETag)
+	}
+	if cursor.LastModified != "" {
+		request.Header.Set("If-Modified-Since", cursor.LastModified)
+	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, cursor, false, err
 	}
 	defer response.Body.Close()
+	nextCursor := cursor
+	nextCursor.SourceID = s.Source.ID
+	if value := response.Header.Get("ETag"); value != "" {
+		nextCursor.ETag = value
+	}
+	if value := response.Header.Get("Last-Modified"); value != "" {
+		nextCursor.LastModified = value
+	}
+	if response.StatusCode == http.StatusNotModified {
+		return nil, nextCursor, true, nil
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("source returned HTTP %d", response.StatusCode)
+		return nil, nextCursor, false, fmt.Errorf("source returned HTTP %d", response.StatusCode)
+	}
+	mediaType, _, contentTypeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if contentTypeErr != nil || !allowedContentType(mediaType, contentTypes) {
+		return nil, nextCursor, false, fmt.Errorf("unsupported source content type %q", response.Header.Get("Content-Type"))
 	}
 	limit := s.BodyLimit
 	if limit <= 0 || limit > defaultHTTPBodyLimit {
@@ -96,12 +134,12 @@ func (s RSSSource) fetch(ctx context.Context) ([]byte, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return nil, err
+		return nil, nextCursor, false, err
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("source response exceeds %d bytes", limit)
+		return nil, nextCursor, false, fmt.Errorf("source response exceeds %d bytes", limit)
 	}
-	return body, nil
+	return body, nextCursor, false, nil
 }
 
 // GitHubReleaseSource reads the public releases API without authentication.
@@ -114,17 +152,30 @@ type GitHubReleaseSource struct {
 	UserAgent string
 }
 
+var _ SourceAdapter = GitHubReleaseSource{}
+
 func (s GitHubReleaseSource) Config() SourceConfig { return s.Source }
 
 func (s GitHubReleaseSource) Fetch(ctx context.Context, maxItems int) ([]RawItem, error) {
-	rss := RSSSource{Source: s.Source, Client: s.Client, BodyLimit: s.BodyLimit, UserAgent: s.UserAgent}
-	body, err := rss.fetch(ctx)
+	result, err := s.FetchWithCursor(ctx, SourceCursor{SourceID: s.Source.ID}, maxItems)
 	if err != nil {
 		return nil, err
 	}
+	return result.Items, nil
+}
+
+func (s GitHubReleaseSource) FetchWithCursor(ctx context.Context, cursor SourceCursor, maxItems int) (FetchResult, error) {
+	rss := RSSSource{Source: s.Source, Client: s.Client, BodyLimit: s.BodyLimit, UserAgent: s.UserAgent}
+	body, nextCursor, notModified, err := rss.fetch(ctx, cursor, []string{"application/json", "application/vnd.github+json"})
+	if err != nil {
+		return FetchResult{}, err
+	}
+	if notModified {
+		return FetchResult{Cursor: nextCursor, NotModified: true}, nil
+	}
 	var releases []githubRelease
 	if err := json.Unmarshal(body, &releases); err != nil {
-		return nil, fmt.Errorf("decode GitHub releases: %w", err)
+		return FetchResult{}, fmt.Errorf("decode GitHub releases: %w", err)
 	}
 	if maxItems < 0 {
 		maxItems = 0
@@ -134,8 +185,12 @@ func (s GitHubReleaseSource) Fetch(ctx context.Context, maxItems int) ([]RawItem
 	}
 	items := make([]RawItem, 0, maxItems)
 	for _, release := range releases[:maxItems] {
+		externalID := release.TagName
+		if release.ID != 0 {
+			externalID = fmt.Sprint(release.ID)
+		}
 		items = append(items, RawItem{
-			ExternalID:   fmt.Sprint(release.ID),
+			ExternalID:   externalID,
 			URL:          release.HTMLURL,
 			Title:        firstNonEmpty(release.Name, release.TagName),
 			Summary:      release.Body,
@@ -144,7 +199,7 @@ func (s GitHubReleaseSource) Fetch(ctx context.Context, maxItems int) ([]RawItem
 			Interests:    append([]string(nil), s.Source.InterestHints...),
 		})
 	}
-	return items, nil
+	return FetchResult{Items: items, Cursor: nextCursor}, nil
 }
 
 type xmlFeed struct {
@@ -194,6 +249,16 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func allowedContentType(mediaType string, allowed []string) bool {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	for _, candidate := range allowed {
+		if mediaType == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func parseFeedTime(value string) time.Time {
