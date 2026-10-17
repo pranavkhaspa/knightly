@@ -1,0 +1,24 @@
+# Local development SearXNG settings for NightShift.
+#
+# NightShift calls the documented /search JSON endpoint, so JSON output must be
+# enabled. This file is mounted read-only into the pinned SearXNG container in
+# deploy/docker/compose.yaml and must never be used for public deployments.
+
+use_default_settings: true
+
+server:
+  # Local-only instance. Replace the secret if this instance is ever exposed
+  # beyond loopback. SearXNG refuses to start with the default placeholder.
+  secret_key: "nightshift-local-search-secret"
+  # The limiter blocks non-browser clients (NightShift is one), so it is off for
+  # this private, loopback-bound instance only.
+  limiter: false
+  image_proxy: false
+  # Do not expose a public metrics or public instance surface here.
+  public_instance: false
+
+search:
+  # html keeps the human UI usable; json is what NightShift consumes.
+  formats:
+    - html
+    - json

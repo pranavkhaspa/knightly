@@ -91,6 +91,21 @@ func TestSearXNGProviderRejectsInvalidRequestsAndResponses(t *testing.T) {
 	}
 }
 
+func TestNewSearXNGProviderRequiresHTTPSForRemoteInstances(t *testing.T) {
+	if _, err := NewSearXNGProvider(SearXNGConfig{BaseURL: "http://searx.example.com"}); !errors.Is(err, ErrInsecureBaseURL) {
+		t.Fatalf("remote http error = %v", err)
+	}
+	if _, err := NewSearXNGProvider(SearXNGConfig{BaseURL: "https://searx.example.com"}); err != nil {
+		t.Fatalf("remote https error = %v", err)
+	}
+	if _, err := NewSearXNGProvider(SearXNGConfig{BaseURL: "http://127.0.0.1:8888"}); err != nil {
+		t.Fatalf("loopback http error = %v", err)
+	}
+	if _, err := NewSearXNGProvider(SearXNGConfig{BaseURL: "http://searx.example.com", AllowInsecureHTTP: true}); err != nil {
+		t.Fatalf("explicit development http error = %v", err)
+	}
+}
+
 func TestSearXNGProviderBoundsResponseAndTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()

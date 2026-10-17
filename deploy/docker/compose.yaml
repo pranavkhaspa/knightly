@@ -15,6 +15,27 @@ services:
       timeout: 3s
       retries: 20
 
+  searxng:
+    # Pinned so the JSON search contract and rate-limit behavior stay
+    # reproducible for local demos. Update deliberately and re-run
+    # internal/search tests. See deploy/docker/searxng/settings.yml for the
+    # JSON-output configuration NightShift depends on.
+    image: searxng/searxng:2026.10.11-ad46ebd7d
+    restart: unless-stopped
+    environment:
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "127.0.0.1:8888:8080"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
   nightshift:
     build:
       context: ../..
@@ -22,6 +43,8 @@ services:
     restart: unless-stopped
     depends_on:
       falkordb:
+        condition: service_healthy
+      searxng:
         condition: service_healthy
     environment:
       NIGHTSHIFT_LISTEN: 0.0.0.0:8080
@@ -32,6 +55,8 @@ services:
       FALKORDB_CONTROL_GRAPH: nightshift_control
       FALKORDB_GRAPH: nightshift_u_demo
       FALKORDB_QUERY_TIMEOUT_MS: 5000
+      # Private SearXNG sidecar (JSON output enabled) for no-card web search.
+      NIGHTSHIFT_SEARCH_URL: http://searxng:8080
       NIGHTSHIFT_ACTIONS_ENABLED: "false"
       NIGHTSHIFT_AUTH_TOKEN: ${NIGHTSHIFT_AUTH_TOKEN:-local-compose-token-change-me}
       NIGHTSHIFT_AUTH_TENANT_ID: ${NIGHTSHIFT_AUTH_TENANT_ID:-tenant_demo}

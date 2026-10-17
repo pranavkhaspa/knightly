@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pranavkhaspa/knightly/internal/auth"
 	"github.com/pranavkhaspa/knightly/internal/identity"
+	"github.com/pranavkhaspa/knightly/internal/observability"
 	"github.com/pranavkhaspa/knightly/internal/profile"
 	"github.com/pranavkhaspa/knightly/internal/scheduler"
 )
@@ -60,6 +62,108 @@ func TestProfileRouteUsesConfiguredScopeInsteadOfRequestIdentity(t *testing.T) {
 	}
 }
 
+func TestVerifiedIdentityOverridesInstallationScope(t *testing.T) {
+	resolver, err := auth.NewTrustedProxyResolver(auth.TrustedProxyConfig{Secret: []byte("proxy-secret")})
+	if err != nil {
+		t.Fatalf("NewTrustedProxyResolver() error = %v", err)
+	}
+	policy, err := auth.New(auth.Config{
+		Resolver: resolver, RequireAuthentication: true,
+		Scope:      identity.Scope{TenantID: "tenant_install", UserID: "user_install"},
+		ApproverID: "user_install",
+	})
+	if err != nil {
+		t.Fatalf("auth.New() error = %v", err)
+	}
+
+	repository := &profileRouteRepository{}
+	app := &application{
+		scope:          identity.Scope{TenantID: "tenant_install", UserID: "user_install"},
+		profiles:       profile.NewService(repository),
+		initialization: stateReady,
+	}
+	handler := policy.Wrap(app.routes())
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{
+		"tenant_id":"tenant_attacker","user_id":"user_attacker","display_name":"Verified user"
+	}`))
+	signature, timestamp := resolver.Sign("tenant_verified", "user_verified", "user_verified", time.Now().UTC())
+	request.Header.Set("X-Nightshift-Tenant", "tenant_verified")
+	request.Header.Set("X-Nightshift-User", "user_verified")
+	request.Header.Set("X-Nightshift-Approver", "user_verified")
+	request.Header.Set("X-Nightshift-Proxy-Signature", signature)
+	request.Header.Set("X-Nightshift-Proxy-Timestamp", timestamp)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("profile save status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repository.saved.TenantID != "tenant_verified" || repository.saved.UserID != "user_verified" {
+		t.Fatalf("saved profile scope = %q/%q, want verified identity", repository.saved.TenantID, repository.saved.UserID)
+	}
+
+	unsigned := httptest.NewRecorder()
+	handler.ServeHTTP(unsigned, httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{"display_name":"x"}`)))
+	if unsigned.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned request status = %d, want 401", unsigned.Code)
+	}
+}
+
+func TestTwoVerifiedUsersAreScopeIsolated(t *testing.T) {
+	resolver, err := auth.NewTrustedProxyResolver(auth.TrustedProxyConfig{Secret: []byte("proxy-secret")})
+	if err != nil {
+		t.Fatalf("NewTrustedProxyResolver() error = %v", err)
+	}
+	policy, err := auth.New(auth.Config{Resolver: resolver, RequireAuthentication: true,
+		Scope: identity.Scope{TenantID: "tenant_install", UserID: "user_install"}, ApproverID: "user_install"})
+	if err != nil {
+		t.Fatalf("auth.New() error = %v", err)
+	}
+	repository := &profileRouteRepository{}
+	app := &application{
+		scope:          identity.Scope{TenantID: "tenant_install", UserID: "user_install"},
+		profiles:       profile.NewService(repository),
+		initialization: stateReady,
+	}
+	handler := policy.Wrap(app.routes())
+
+	save := func(tenant, user, name string) int {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/profile", strings.NewReader(`{"display_name":"`+name+`"}`))
+		signature, timestamp := resolver.Sign(tenant, user, user, time.Now().UTC())
+		request.Header.Set("X-Nightshift-Tenant", tenant)
+		request.Header.Set("X-Nightshift-User", user)
+		request.Header.Set("X-Nightshift-Approver", user)
+		request.Header.Set("X-Nightshift-Proxy-Signature", signature)
+		request.Header.Set("X-Nightshift-Proxy-Timestamp", timestamp)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+	read := func(tenant, user string) int {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/profile", nil)
+		signature, timestamp := resolver.Sign(tenant, user, user, time.Now().UTC())
+		request.Header.Set("X-Nightshift-Tenant", tenant)
+		request.Header.Set("X-Nightshift-User", user)
+		request.Header.Set("X-Nightshift-Approver", user)
+		request.Header.Set("X-Nightshift-Proxy-Signature", signature)
+		request.Header.Set("X-Nightshift-Proxy-Timestamp", timestamp)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+
+	if code := save("tenant-a", "user-a", "Alice"); code != http.StatusOK {
+		t.Fatalf("save as user-a status = %d", code)
+	}
+	if repository.saved.UserID != "user-a" {
+		t.Fatalf("saved user = %q", repository.saved.UserID)
+	}
+	if code := read("tenant-b", "user-b"); code != http.StatusNotFound {
+		t.Fatalf("read as user-b status = %d, want 404", code)
+	}
+}
+
 func TestRunAndSchedulerControlRoutesUseScheduler(t *testing.T) {
 	runnerStarted := make(chan struct{}, 1)
 	schedule, err := scheduler.New(scheduler.Config{Interval: time.Hour}, scheduler.RunFunc(func(context.Context) error {
@@ -96,5 +200,23 @@ func TestRunAndSchedulerControlRoutesUseScheduler(t *testing.T) {
 	handler.ServeHTTP(resumeResponse, httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/resume", nil))
 	if resumeResponse.Code != http.StatusOK || schedule.Status().Paused {
 		t.Fatalf("resume status = %d scheduler=%+v", resumeResponse.Code, schedule.Status())
+	}
+}
+
+func TestMetricsEndpointRendersPrometheusText(t *testing.T) {
+	metrics := observability.NewMetrics()
+	metrics.RecordApproval("approved")
+	app := &application{metrics: metrics, initialization: stateReady}
+	recorder := httptest.NewRecorder()
+	app.routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d", recorder.Code)
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/plain") {
+		t.Fatalf("metrics content type = %q", contentType)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "nightshift_approvals_total{result=\"approved\"} 1") {
+		t.Fatalf("metrics body missing approvals counter:\n%s", body)
 	}
 }

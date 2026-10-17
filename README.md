@@ -119,6 +119,13 @@ loader. Important settings:
 | `NIGHTSHIFT_AUTH_USERNAME` / `NIGHTSHIFT_AUTH_PASSWORD` | Basic credential alternative to the token | unset |
 | `NIGHTSHIFT_AUTH_TENANT_ID` / `NIGHTSHIFT_AUTH_USER_ID` | trusted graph scope attached by auth middleware | `tenant_demo` / `user_demo` |
 | `NIGHTSHIFT_AUTH_APPROVER_ID` | trusted actor recorded for approvals | `user_demo` |
+| `NIGHTSHIFT_OIDC_ISSUER` / `NIGHTSHIFT_OIDC_AUDIENCE` / `NIGHTSHIFT_OIDC_JWKS_URL` | verified OIDC bearer identity (optional) | unset |
+| `NIGHTSHIFT_OIDC_TENANT_CLAIM` | token claim mapped to the tenant scope | `tenant` |
+| `NIGHTSHIFT_TRUSTED_PROXY_SECRET` | HMAC secret for signature-verified proxy identity (optional) | unset |
+| `NIGHTSHIFT_LOG_FORMAT` | structured log encoding (`json` or `text`) | `json` |
+| `NIGHTSHIFT_LOG_LEVEL` | `debug`, `info`, `warn`, or `error` | `info` |
+| `NIGHTSHIFT_OTLP_ENDPOINT` | optional non-blocking OTLP/HTTP metrics export endpoint | unset |
+| `NIGHTSHIFT_METRICS_PUBLIC` | expose `GET /metrics` without credentials (trusted scrape network only) | `false` |
 
 Do not put credentials in graph names, URLs returned by the API, logs, source
 fixtures, screenshots, or committed files. The only local artifact written by
