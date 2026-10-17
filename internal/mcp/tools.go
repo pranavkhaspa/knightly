@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pranavkhaspa/knightly/internal/memory"
+	"github.com/pranavkhaspa/knightly/internal/search"
 )
 
 type ToolName string
@@ -19,6 +20,7 @@ const (
 	RetrieveMemory        ToolName = "memory.retrieve"
 	ProposePlan           ToolName = "planner.propose_plan"
 	RecordFeedback        ToolName = "feedback.record"
+	SearchWeb             ToolName = "search.web"
 )
 
 var (
@@ -68,6 +70,17 @@ type RelevantItem struct {
 
 type SearchRelevantItemsOutput struct {
 	Items []RelevantItem `json:"items"`
+}
+
+type SearchWebInput struct {
+	Meta  RequestMeta
+	Query string
+	Page  int
+	Limit int
+}
+
+type SearchWebOutput struct {
+	Response search.SearchResponse `json:"response"`
 }
 
 type ExplainRecommendationInput struct {
@@ -190,6 +203,7 @@ type Dependencies struct {
 	Planner  Planner
 	Feedback FeedbackRecorder
 	Calls    ToolCallRepository
+	Web      search.Provider
 	Now      func() time.Time
 }
 
@@ -199,6 +213,7 @@ type Server struct {
 	planner  Planner
 	feedback FeedbackRecorder
 	calls    ToolCallRepository
+	web      search.Provider
 	now      func() time.Time
 }
 
@@ -215,8 +230,32 @@ func NewServer(dependencies Dependencies) *Server {
 		planner:  dependencies.Planner,
 		feedback: dependencies.Feedback,
 		calls:    dependencies.Calls,
+		web:      dependencies.Web,
 		now:      now,
 	}
+}
+
+func (s *Server) SearchWeb(ctx context.Context, input SearchWebInput) (SearchWebOutput, error) {
+	if err := validateMeta(input.Meta); err != nil {
+		return SearchWebOutput{}, err
+	}
+	if strings.TrimSpace(input.Query) == "" {
+		return SearchWebOutput{}, fmt.Errorf("%w: query is required", ErrInvalidToolInput)
+	}
+	if s == nil || s.web == nil {
+		return SearchWebOutput{}, ErrToolProviderUnavailable
+	}
+	result, err := s.run(ctx, SearchWeb, input.Meta, "SearchWebInput", func() (interface{}, error) {
+		response, searchErr := s.web.Search(ctx, search.SearchRequest{Query: input.Query, Page: input.Page, Limit: input.Limit})
+		if searchErr != nil {
+			return nil, searchErr
+		}
+		return SearchWebOutput{Response: response}, nil
+	})
+	if err != nil {
+		return SearchWebOutput{}, err
+	}
+	return result.(SearchWebOutput), nil
 }
 
 func (s *Server) RetrieveMemory(ctx context.Context, input MemoryRetrieveInput) (MemoryRetrieveOutput, error) {
@@ -350,7 +389,7 @@ func (s *Server) Record(ctx context.Context, input FeedbackInput) (FeedbackRecor
 }
 
 // Invoke is the only dynamic-looking entry point. The switch accepts exactly
-// the five declared typed input structs; there is no map-to-Cypher or shell
+// the declared typed input structs; there is no map-to-Cypher or shell
 // escape hatch.
 func (s *Server) Invoke(ctx context.Context, name ToolName, input interface{}) (interface{}, error) {
 	switch name {
@@ -384,6 +423,12 @@ func (s *Server) Invoke(ctx context.Context, name ToolName, input interface{}) (
 			return nil, fmt.Errorf("%w: %s expects FeedbackInput", ErrInvalidToolInput, name)
 		}
 		return s.Record(ctx, request)
+	case SearchWeb:
+		request, ok := input.(SearchWebInput)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s expects SearchWebInput", ErrInvalidToolInput, name)
+		}
+		return s.SearchWeb(ctx, request)
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownTool, name)
 	}

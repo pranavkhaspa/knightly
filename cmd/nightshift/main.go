@@ -22,6 +22,7 @@ import (
 	"github.com/pranavkhaspa/knightly/internal/actions"
 	"github.com/pranavkhaspa/knightly/internal/agents"
 	"github.com/pranavkhaspa/knightly/internal/auth"
+	"github.com/pranavkhaspa/knightly/internal/briefing"
 	"github.com/pranavkhaspa/knightly/internal/chat"
 	"github.com/pranavkhaspa/knightly/internal/config"
 	"github.com/pranavkhaspa/knightly/internal/falkor"
@@ -61,6 +62,8 @@ type application struct {
 	coordinator  *agents.Coordinator
 	actions      *actions.Service
 	chat         *chat.Service
+	turns        *chat.TurnService
+	briefings    *briefing.Service
 	search       search.Provider
 	tools        *mcp.Server
 	profiles     *profile.Service
@@ -77,6 +80,8 @@ type application struct {
 	initialization    initializationState
 	initializationErr string
 	collection        collectionState
+	turnMu            sync.Mutex
+	turnCancels       map[string]context.CancelFunc
 }
 
 type collectionState struct {
@@ -110,6 +115,12 @@ func (r collectionRunner) RunManual(ctx context.Context) error {
 
 func newApplication(cfg config.Config, graph *falkor.Client) (*application, error) {
 	scope := identity.Scope{TenantID: cfg.TenantID, UserID: cfg.UserID}
+	if cfg.AuthTenantID != "" {
+		scope.TenantID = cfg.AuthTenantID
+	}
+	if cfg.AuthUserID != "" {
+		scope.UserID = cfg.AuthUserID
+	}
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid installation scope: %w", err)
 	}
@@ -133,6 +144,8 @@ func newApplication(cfg config.Config, graph *falkor.Client) (*application, erro
 		coordinator:    agents.NewCoordinator(falkor.NewAgentRepository(graph)),
 		actions:        actions.NewService(falkor.NewActionRepository(graph), cfg.ActionsEnabled),
 		chat:           chat.NewService(falkor.NewChatRepository(selector)),
+		turns:          chat.NewTurnService(falkor.NewChatRepository(selector)),
+		briefings:      briefing.NewService(falkor.NewBriefingRepository(selector)),
 		profiles:       profile.NewService(falkor.NewProfileRepository(selector)),
 		projects:       project.NewService(falkor.NewProjectRepository(selector)),
 		requirements:   requirement.NewService(falkor.NewRequirementRepository(selector)),
@@ -181,7 +194,9 @@ func newApplication(cfg config.Config, graph *falkor.Client) (*application, erro
 		Planner:  graph,
 		Feedback: graph,
 		Calls:    falkor.NewToolCallRepository(graph),
+		Web:      app.search,
 	})
+	app.turnCancels = make(map[string]context.CancelFunc)
 	return app, nil
 }
 
@@ -245,7 +260,7 @@ func main() {
 
 	policy, err := auth.New(auth.Config{
 		Token: cfg.AuthToken, Username: cfg.AuthUsername, Password: cfg.AuthPassword,
-		Scope:      identity.Scope{TenantID: cfg.TenantID, UserID: cfg.UserID},
+		Scope:      identity.Scope{TenantID: cfg.AuthTenantID, UserID: cfg.AuthUserID},
 		ApproverID: cfg.AuthApproverID, RequireAuthentication: cfg.AuthRequired,
 		PublicPaths: []string{"/health/live"},
 	})
@@ -257,7 +272,7 @@ func main() {
 		Handler:           policy.Wrap(app.routes()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		WriteTimeout:      40 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -321,7 +336,21 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/conversations/{id}", a.conversationUpdate)
 	mux.HandleFunc("GET /api/v1/conversations/{id}/messages", a.messagesRead)
 	mux.HandleFunc("POST /api/v1/conversations/{id}/messages", a.messageCreate)
+	mux.HandleFunc("POST /api/v1/conversations/{id}/cancel", a.conversationCancel)
 	mux.HandleFunc("GET /api/v1/conversations/{id}/events", a.eventsStream)
+	mux.HandleFunc("GET /api/v1/tasks", a.tasksRead)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", a.taskRead)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", a.taskRetry)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", a.taskCancel)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/heartbeat", a.taskHeartbeat)
+	mux.HandleFunc("GET /api/v1/briefings", a.briefingsRead)
+	mux.HandleFunc("POST /api/v1/briefings/run", a.briefingRun)
+	mux.HandleFunc("GET /api/v1/briefings/{date}", a.briefingRead)
+	mux.HandleFunc("POST /api/v1/briefings/{date}/read", a.briefingMarkRead)
+	mux.HandleFunc("GET /api/v1/inbox", a.inboxRead)
+	mux.HandleFunc("GET /api/v1/inbox/{id}", a.inboxItemRead)
+	mux.HandleFunc("POST /api/v1/inbox/{id}/read", a.inboxMarkRead)
+	mux.HandleFunc("POST /api/v1/inbox/{id}/archive", a.inboxArchive)
 	mux.HandleFunc("GET /api/v1/search", a.searchRead)
 	mux.HandleFunc("GET /api/v1/decisions", a.decisionsRead)
 	mux.HandleFunc("POST /api/v1/decisions", a.decisionSave)
@@ -350,6 +379,19 @@ func (a *application) routes() http.Handler {
 	return requestID(mux)
 }
 
+func (a *application) trustedScope(request *http.Request) (identity.Scope, error) {
+	if scope, err := auth.ScopeFromRequest(request); err == nil {
+		return scope, nil
+	}
+	// Direct service-handler tests and embedded deployments can call routes
+	// without the outer middleware. The production server always wraps routes
+	// with auth.Middleware, so client JSON never supplies this fallback.
+	if err := a.scope.Validate(); err != nil {
+		return identity.Scope{}, fmt.Errorf("trusted request scope is unavailable: %w", err)
+	}
+	return a.scope, nil
+}
+
 func (a *application) initialize(ctx context.Context) error {
 	a.lifecycleMu.Lock()
 	state, _, _ := a.initializationStatus()
@@ -366,6 +408,11 @@ func (a *application) initialize(ctx context.Context) error {
 	if err := a.ensureSetup(ctx); err != nil {
 		a.failInitialization(err.Error())
 		return fmt.Errorf("complete setup: %w", err)
+	}
+	if _, err := a.coordinator.RecoverStaleRunning(ctx, a.scope.TenantID, a.scope.UserID, time.Now().UTC().Add(-10*time.Minute)); err != nil {
+		// Recovery is best effort during startup; the ready state should still
+		// expose a usable service when an older graph lacks task lease fields.
+		log.Printf("event=stale_task_recovery_failed error=%q", err)
 	}
 	a.lifecycleMu.Lock()
 	defer a.lifecycleMu.Unlock()
@@ -627,7 +674,12 @@ func (a *application) status(w http.ResponseWriter, request *http.Request) {
 func (a *application) dashboard(w http.ResponseWriter, request *http.Request) {
 	ctx, cancel := falkor.ReadinessContext(request.Context())
 	defer cancel()
-	dashboard, err := a.graph.Dashboard(ctx)
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	dashboard, err := a.graph.DashboardForScope(ctx, scope)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":  "dashboard_unavailable",
@@ -922,21 +974,39 @@ type conversationUpdateRequest struct {
 }
 
 type messageRequest struct {
-	ID      string `json:"id,omitempty"`
-	TurnID  string `json:"turn_id,omitempty"`
-	Content string `json:"content"`
+	ID             string `json:"id,omitempty"`
+	TurnID         string `json:"turn_id,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	Content        string `json:"content"`
 }
 
 func (a *application) conversationsRead(w http.ResponseWriter, request *http.Request) {
 	if !a.requireReady(w) {
 		return
 	}
-	values, err := a.chat.ListConversations(request.Context(), a.scope, parseLimit(request.URL.Query().Get("limit"), chat.DefaultLimit))
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	conversationCursor := strings.TrimSpace(request.URL.Query().Get("after"))
+	if conversationCursor != "" {
+		if err := identity.ValidateID("conversation cursor", conversationCursor); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_CONVERSATION_CURSOR", err, false)
+			return
+		}
+	}
+	limit := parseLimit(request.URL.Query().Get("limit"), chat.DefaultLimit)
+	values, err := a.chat.ListConversationsAfter(request.Context(), scope, conversationCursor, limit)
 	if err != nil {
 		writeDomainError(w, "CONVERSATION_LIST_FAILED", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"conversations": values})
+	var next interface{}
+	if len(values) == limit && len(values) > 0 {
+		next = values[len(values)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"conversations": values, "next_cursor": next})
 }
 
 func (a *application) conversationCreate(w http.ResponseWriter, request *http.Request) {
@@ -947,17 +1017,25 @@ func (a *application) conversationCreate(w http.ResponseWriter, request *http.Re
 	if err := decodeJSON(w, request, &body); err != nil {
 		return
 	}
-	value, err := a.chat.CreateConversation(request.Context(), a.scope, body.ProjectID, body.Title)
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	value, err := a.chat.CreateConversation(request.Context(), scope, body.ProjectID, body.Title)
 	if err != nil {
 		writeDomainError(w, "CONVERSATION_CREATE_FAILED", err)
 		return
 	}
-	_, _ = a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+	if _, err := a.chat.AppendEvent(request.Context(), scope, chat.Event{
 		ID:             stableAPIID("event", value.ID+"\x00created"),
 		ConversationID: value.ID,
 		Type:           chat.ConversationCreated,
 		Data:           map[string]string{"title": value.Title},
-	})
+	}); err != nil {
+		writeDomainError(w, "EVENT_APPEND_FAILED", err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, value)
 }
 
@@ -965,17 +1043,27 @@ func (a *application) conversationRead(w http.ResponseWriter, request *http.Requ
 	if !a.requireReady(w) {
 		return
 	}
-	value, err := a.chat.GetConversation(request.Context(), a.scope, request.PathValue("id"))
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	value, err := a.chat.GetConversation(request.Context(), scope, request.PathValue("id"))
 	if err != nil {
 		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
 		return
 	}
-	messages, err := a.chat.ListMessages(request.Context(), a.scope, value.ID, parseLimit(request.URL.Query().Get("message_limit"), chat.DefaultLimit))
+	after, err := parseCursor(request.URL.Query().Get("after"), "after")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_MESSAGE_CURSOR", err, false)
+		return
+	}
+	messages, err := a.chat.ListMessagesAfter(request.Context(), scope, value.ID, after, parseLimit(request.URL.Query().Get("message_limit"), chat.DefaultLimit))
 	if err != nil {
 		writeDomainError(w, "MESSAGE_LIST_FAILED", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"conversation": value, "messages": messages})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"conversation": value, "messages": messages, "next_cursor": nextMessageCursor(messages, parseLimit(request.URL.Query().Get("message_limit"), chat.DefaultLimit))})
 }
 
 func (a *application) conversationUpdate(w http.ResponseWriter, request *http.Request) {
@@ -986,7 +1074,12 @@ func (a *application) conversationUpdate(w http.ResponseWriter, request *http.Re
 	if err := decodeJSON(w, request, &body); err != nil {
 		return
 	}
-	value, err := a.chat.GetConversation(request.Context(), a.scope, request.PathValue("id"))
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	value, err := a.chat.GetConversation(request.Context(), scope, request.PathValue("id"))
 	if err != nil {
 		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
 		return
@@ -997,7 +1090,7 @@ func (a *application) conversationUpdate(w http.ResponseWriter, request *http.Re
 	if body.Status != nil {
 		value.Status = *body.Status
 	}
-	updated, err := a.chat.UpdateConversation(request.Context(), a.scope, value)
+	updated, err := a.chat.UpdateConversation(request.Context(), scope, value)
 	if err != nil {
 		writeDomainError(w, "CONVERSATION_UPDATE_FAILED", err)
 		return
@@ -1010,16 +1103,27 @@ func (a *application) messagesRead(w http.ResponseWriter, request *http.Request)
 		return
 	}
 	conversationID := request.PathValue("id")
-	if _, err := a.chat.GetConversation(request.Context(), a.scope, conversationID); err != nil {
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	if _, err := a.chat.GetConversation(request.Context(), scope, conversationID); err != nil {
 		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
 		return
 	}
-	values, err := a.chat.ListMessages(request.Context(), a.scope, conversationID, parseLimit(request.URL.Query().Get("limit"), chat.DefaultLimit))
+	after, err := parseCursor(request.URL.Query().Get("after"), "after")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_MESSAGE_CURSOR", err, false)
+		return
+	}
+	limit := parseLimit(request.URL.Query().Get("limit"), chat.DefaultLimit)
+	values, err := a.chat.ListMessagesAfter(request.Context(), scope, conversationID, after, limit)
 	if err != nil {
 		writeDomainError(w, "MESSAGE_LIST_FAILED", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"messages": values})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"messages": values, "next_cursor": nextMessageCursor(values, limit)})
 }
 
 func (a *application) messageCreate(w http.ResponseWriter, request *http.Request) {
@@ -1027,7 +1131,12 @@ func (a *application) messageCreate(w http.ResponseWriter, request *http.Request
 		return
 	}
 	conversationID := request.PathValue("id")
-	if _, err := a.chat.GetConversation(request.Context(), a.scope, conversationID); err != nil {
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	if _, err := a.chat.GetConversation(request.Context(), scope, conversationID); err != nil {
 		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
 		return
 	}
@@ -1035,86 +1144,306 @@ func (a *application) messageCreate(w http.ResponseWriter, request *http.Request
 	if err := decodeJSON(w, request, &body); err != nil {
 		return
 	}
-	requestID := requestIdentifier(request)
-	turnID := body.TurnID
+	idempotencyKey := strings.TrimSpace(body.IdempotencyKey)
+	if idempotencyKey == "" {
+		idempotencyKey = strings.TrimSpace(request.Header.Get("Idempotency-Key"))
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = requestIdentifier(request)
+	}
+	turnID := strings.TrimSpace(body.TurnID)
 	if turnID == "" {
-		turnID = stableAPIID("turn", conversationID+"\x00"+requestID)
+		turnID = stableAPIID("turn", conversationID+"\x00"+idempotencyKey)
 	}
 	messageID := body.ID
 	if messageID == "" {
-		messageID = stableAPIID("message", conversationID+"\x00"+requestID)
+		messageID = stableAPIID("message", conversationID+"\x00"+idempotencyKey)
 	}
-	userMessage, err := a.chat.AddMessage(request.Context(), a.scope, chat.Message{
+	turn, created, err := a.turns.Begin(request.Context(), scope, conversationID, idempotencyKey, messageID)
+	if err != nil {
+		writeDomainError(w, "TURN_CREATE_FAILED", err)
+		return
+	}
+	if !created {
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{
+			"conversation_id": conversationID, "turn_id": turn.ID, "turn": turn,
+			"status": turn.Status, "stream_url": "/api/v1/conversations/" + conversationID + "/events",
+		})
+		return
+	}
+	turnID = turn.ID
+	userMessage, err := a.chat.AddMessage(request.Context(), scope, chat.Message{
 		ID: messageID, ConversationID: conversationID, TurnID: turnID,
 		Role: chat.RoleUser, Content: body.Content,
 	})
 	if err != nil {
+		_, _ = a.turns.Fail(context.Background(), scope, turn.ID, err)
 		writeDomainError(w, "MESSAGE_CREATE_FAILED", err)
 		return
 	}
-	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+	if _, err := a.chat.AppendEvent(request.Context(), scope, chat.Event{
 		ID: stableAPIID("event", turnID+"\x00message"), ConversationID: conversationID, TurnID: turnID,
 		Type: chat.MessageCreated, Data: map[string]string{"message_id": userMessage.ID, "role": string(userMessage.Role)},
 	}); err != nil {
+		_, _ = a.turns.Fail(context.Background(), scope, turn.ID, err)
 		writeDomainError(w, "EVENT_APPEND_FAILED", err)
 		return
 	}
-	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
+	if _, err := a.chat.AppendEvent(request.Context(), scope, chat.Event{
 		ID: stableAPIID("event", turnID+"\x00started"), ConversationID: conversationID, TurnID: turnID,
-		Type: chat.TurnStarted, Data: map[string]string{"message_id": userMessage.ID},
+		Type: chat.TurnStarted, Data: map[string]string{"message_id": userMessage.ID, "intent": string(chat.RouteIntent(body.Content).Intent)},
 	}); err != nil {
+		_, _ = a.turns.Fail(context.Background(), scope, turn.ID, err)
 		writeDomainError(w, "EVENT_APPEND_FAILED", err)
 		return
 	}
 
-	assistantContent := "I recorded your request. Provider-backed search and coding actions will stream into this conversation as they are configured."
-	var assistantCitations []chat.Citation
-	if query, shouldSearch := chatSearchQuery(body.Content); shouldSearch && a.search != nil {
-		_, _ = a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
-			ID: stableAPIID("event", turnID+"\x00search-started"), ConversationID: conversationID, TurnID: turnID,
-			Type: chat.TurnProgress, Data: map[string]string{"phase": "search", "query": query},
-		})
-		result, searchErr := a.search.Search(request.Context(), search.SearchRequest{Query: query, Limit: 5})
-		if searchErr != nil {
-			assistantContent = "I could not complete the web search: " + searchErr.Error()
-		} else {
-			assistantContent, assistantCitations = formatSearchAnswer(result)
-		}
-		_, _ = a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
-			ID: stableAPIID("event", turnID+"\x00search-completed"), ConversationID: conversationID, TurnID: turnID,
-			Type: chat.TurnProgress, Data: map[string]string{"phase": "search", "status": "completed"},
-		})
-	}
-	// This deterministic response keeps the durable chat flow useful before an
-	// optional model or external search provider is configured. Provider-backed
-	// responders preserve the same message and event records.
-	assistantMessage, err := a.chat.AddMessage(request.Context(), a.scope, chat.Message{
-		ID: stableAPIID("message", turnID+"\x00assistant"), ConversationID: conversationID, TurnID: turnID,
-		Role: chat.RoleAssistant, Content: assistantContent, Citations: assistantCitations,
-	})
-	if err != nil {
-		writeDomainError(w, "MESSAGE_CREATE_FAILED", err)
-		return
-	}
-	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
-		ID: stableAPIID("event", turnID+"\x00assistant"), ConversationID: conversationID, TurnID: turnID,
-		Type: chat.MessageCreated, Data: map[string]string{"message_id": assistantMessage.ID, "role": string(assistantMessage.Role)},
-	}); err != nil {
-		writeDomainError(w, "EVENT_APPEND_FAILED", err)
-		return
-	}
-	if _, err := a.chat.AppendEvent(request.Context(), a.scope, chat.Event{
-		ID: stableAPIID("event", turnID+"\x00completed"), ConversationID: conversationID, TurnID: turnID,
-		Type: chat.AssistantCompleted, Data: map[string]string{"message_id": assistantMessage.ID},
-	}); err != nil {
-		writeDomainError(w, "EVENT_APPEND_FAILED", err)
-		return
-	}
+	go a.executeTurn(scope, conversationID, turnID, body.Content)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"conversation_id": conversationID, "turn_id": turnID,
-		"user_message": userMessage, "assistant_message": assistantMessage,
-		"stream_url": "/api/v1/conversations/" + conversationID + "/events",
+		"conversation_id": conversationID, "turn_id": turnID, "turn": turn,
+		"user_message": userMessage, "stream_url": "/api/v1/conversations/" + conversationID + "/events",
 	})
+}
+
+func (a *application) executeTurn(scope identity.Scope, conversationID, turnID, content string) {
+	turnContext, cancel := context.WithCancel(context.Background())
+	a.turnMu.Lock()
+	if a.turnCancels == nil {
+		a.turnCancels = make(map[string]context.CancelFunc)
+	}
+	a.turnCancels[turnID] = cancel
+	a.turnMu.Unlock()
+	defer func() {
+		cancel()
+		a.turnMu.Lock()
+		delete(a.turnCancels, turnID)
+		a.turnMu.Unlock()
+	}()
+
+	started, err := a.turns.Start(turnContext, scope, turnID)
+	if err != nil {
+		a.failTurn(scope, conversationID, turnID, err)
+		return
+	}
+	if started.Status == chat.TurnStatusCancelled || started.CancelRequested {
+		a.cancelledTurn(scope, conversationID, turnID)
+		return
+	}
+	if err := a.emitTurnEvent(turnContext, scope, chat.Event{
+		ID: stableAPIID("event", turnID+"\x00running"), ConversationID: conversationID, TurnID: turnID,
+		Type: chat.TurnProgress, Data: map[string]string{"phase": "context", "status": "running"},
+	}); err != nil {
+		a.failTurn(scope, conversationID, turnID, err)
+		return
+	}
+
+	routed := chat.RouteIntent(content)
+	projectID := a.config.ProjectID
+	if conversation, err := a.chat.GetConversation(turnContext, scope, conversationID); err == nil && conversation.ProjectID != "" {
+		projectID = conversation.ProjectID
+	}
+	meta := mcp.RequestMeta{TenantID: scope.TenantID, UserID: scope.UserID, RequestID: turnID, SessionID: conversationID, TaskID: turnID}
+	memoryMeta := meta
+	memoryMeta.CallID = stableAPIID("toolcall", turnID+"\x00memory")
+	contextMeta := meta
+	contextMeta.CallID = stableAPIID("toolcall", turnID+"\x00context")
+	// Every turn gets a bounded memory lookup through the typed tool boundary.
+	_, _ = a.tools.RetrieveMemory(turnContext, mcp.MemoryRetrieveInput{Meta: memoryMeta, ProjectID: projectID, Limit: 5, MaxBytes: 16 * 1024})
+	// Project/source context is also graph-bounded and scope-routed. The result
+	// is intentionally kept out of the prompt unless the selected intent uses
+	// it, preventing an unbounded context dump.
+	_, _ = a.tools.SearchItems(turnContext, mcp.SearchRelevantItemsInput{Meta: contextMeta, ProjectID: projectID, Query: boundedString(content, 256), Limit: 5})
+	_, _ = a.sessions.ListDecisions(turnContext, scope, "", 5)
+
+	assistantContent := "I recorded your request. I can search connected sources, explain graph evidence, prepare a report, or start a bounded task."
+	var citations []chat.Citation
+	toolReferences := []string{memoryMeta.CallID, contextMeta.CallID}
+	var taskReferences []string
+	var toolName string
+	switch routed.Intent {
+	case chat.IntentSearchWeb, chat.IntentWhatChanged:
+		toolName = string(mcp.SearchWeb)
+		toolMeta := meta
+		toolMeta.CallID = stableAPIID("toolcall", turnID+"\x00web")
+		if routed.Query == "" {
+			routed.Query = content
+		}
+		if _, err := a.chat.AddMessage(turnContext, scope, chat.Message{
+			ID: stableAPIID("message", turnID+"\x00tool-progress"), ConversationID: conversationID, TurnID: turnID,
+			Role: chat.RoleProgress, Content: "Searching the configured web provider…",
+		}); err == nil {
+			_ = a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+"\x00search-started"), ConversationID: conversationID, TurnID: turnID, Type: chat.ToolStarted, Data: map[string]string{"tool": toolName, "query": boundedString(routed.Query, 512)}})
+		}
+		result, err := a.tools.SearchWeb(turnContext, mcp.SearchWebInput{Meta: toolMeta, Query: routed.Query, Limit: 5})
+		if err != nil {
+			assistantContent = "Web search is unavailable right now. I kept your request and will not retry it without a new turn."
+		} else {
+			assistantContent, citations = formatSearchAnswer(result.Response)
+		}
+		toolReferences = append(toolReferences, toolMeta.CallID)
+		_ = a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+"\x00search-completed"), ConversationID: conversationID, TurnID: turnID, Type: chat.ToolCompleted, Data: map[string]string{"tool": toolName, "status": "completed"}})
+	case chat.IntentSearchSources:
+		toolName = string(mcp.SearchRelevantItems)
+		toolMeta := meta
+		toolMeta.CallID = stableAPIID("toolcall", turnID+"\x00sources")
+		result, err := a.tools.SearchItems(turnContext, mcp.SearchRelevantItemsInput{Meta: toolMeta, ProjectID: projectID, Query: routed.Query, Limit: 5})
+		if err != nil || len(result.Items) == 0 {
+			assistantContent = "No connected source items matched that request yet."
+		} else {
+			var builder strings.Builder
+			fmt.Fprintf(&builder, "Connected source items for %q:\n\n", routed.Query)
+			for index, item := range result.Items {
+				fmt.Fprintf(&builder, "%d. %s\n%s\n\n", index+1, item.Title, item.Summary)
+			}
+			assistantContent = boundedString(strings.TrimSpace(builder.String()), chat.MaxMessage)
+		}
+		toolReferences = append(toolReferences, toolMeta.CallID)
+	case chat.IntentShowTaskStatus:
+		tasks, err := a.coordinator.ListTasks(turnContext, scope.TenantID, scope.UserID, projectID, 20)
+		if err != nil || len(tasks) == 0 {
+			assistantContent = "There are no persisted tasks for this project."
+		} else {
+			var builder strings.Builder
+			builder.WriteString("Current task status:\n\n")
+			for _, task := range tasks {
+				fmt.Fprintf(&builder, "- %s: %s (%d%%)\n", task.ID, task.Status, task.Progress)
+			}
+			assistantContent = boundedString(strings.TrimSpace(builder.String()), chat.MaxMessage)
+		}
+	case chat.IntentBuildDemo:
+		taskID := stableAPIID("task", turnID+"\x00build")
+		_, err := a.coordinator.CreateTask(turnContext, agents.Task{ID: taskID, TenantID: scope.TenantID, UserID: scope.UserID, ProjectID: projectID, Agent: agents.PlannerAgent, Status: agents.Pending, Priority: 1, ConversationID: conversationID, TurnID: turnID, Phase: "queued"})
+		if err != nil {
+			assistantContent = "I could not queue the bounded task yet."
+		} else {
+			assistantContent = fmt.Sprintf("I queued a bounded planner task (%s). It will remain approval-gated before any external write.", taskID)
+			taskReferences = append(taskReferences, taskID)
+			_ = a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+"\x00task-created"), ConversationID: conversationID, TurnID: turnID, TaskID: taskID, Type: chat.EventType("task.created"), Data: map[string]string{"task_id": taskID, "status": string(agents.Pending)}})
+		}
+	case chat.IntentMorningReport:
+		assistantContent = "I can prepare the durable daily report from the Briefing panel. Use Run briefing to collect current graph recommendations, tasks, and provider health."
+	case chat.IntentReadMail, chat.IntentCalendarToday, chat.IntentCreateReminder:
+		assistantContent = "That provider is not enabled in this deployment yet. The request is persisted and no external side effect was performed."
+	case chat.IntentExplainRecommendation, chat.IntentWhyDoesThisMatter:
+		assistantContent = "Open a recommendation's graph-path drawer to inspect the project → requirement → technology → evidence path."
+	case chat.IntentReviewDiff, chat.IntentProposeGitHubAction:
+		assistantContent = "External coding and GitHub writes remain approval-gated. I can show a task or local plan once its bounded artifacts are available."
+	}
+	if toolName != "" {
+		if _, err := a.chat.AddMessage(turnContext, scope, chat.Message{ID: stableAPIID("message", turnID+"\x00tool"), ConversationID: conversationID, TurnID: turnID, Role: chat.RoleTool, Content: boundedString(toolName+" completed", chat.MaxMessage)}); err != nil {
+			a.failTurn(scope, conversationID, turnID, err)
+			return
+		}
+	}
+
+	select {
+	case <-turnContext.Done():
+		a.cancelledTurn(scope, conversationID, turnID)
+		return
+	default:
+	}
+	assistantID := stableAPIID("message", turnID+"\x00assistant")
+	assistantMessage, err := a.chat.AddMessage(turnContext, scope, chat.Message{ID: assistantID, ConversationID: conversationID, TurnID: turnID, Role: chat.RoleAssistant, Content: boundedString(assistantContent, chat.MaxMessage), Citations: citations, ToolCallIDs: toolReferences, TaskIDs: taskReferences})
+	if err != nil {
+		a.failTurn(scope, conversationID, turnID, err)
+		return
+	}
+	if err := a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+"\x00assistant"), ConversationID: conversationID, TurnID: turnID, Type: chat.MessageCreated, Data: map[string]string{"message_id": assistantMessage.ID, "role": string(assistantMessage.Role)}}); err != nil {
+		a.failTurn(scope, conversationID, turnID, err)
+		return
+	}
+	assistantRunes := []rune(assistantMessage.Content)
+	for offset, chunk := 0, 0; offset < len(assistantRunes); chunk++ {
+		end := offset + 4000
+		if end > len(assistantRunes) {
+			end = len(assistantRunes)
+		}
+		if err := a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+fmt.Sprintf("\x00delta-%d", chunk)), ConversationID: conversationID, TurnID: turnID, Type: chat.AssistantDelta, Data: map[string]string{"delta": string(assistantRunes[offset:end]), "message_id": assistantMessage.ID}}); err != nil {
+			a.failTurn(scope, conversationID, turnID, err)
+			return
+		}
+		offset = end
+	}
+	if _, err := a.turns.Complete(turnContext, scope, turnID, assistantMessage.ID); err != nil {
+		a.failTurn(scope, conversationID, turnID, err)
+		return
+	}
+	_ = a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+"\x00assistant-completed"), ConversationID: conversationID, TurnID: turnID, Type: chat.AssistantCompleted, Data: map[string]string{"message_id": assistantMessage.ID}})
+	_ = a.emitTurnEvent(turnContext, scope, chat.Event{ID: stableAPIID("event", turnID+"\x00completed"), ConversationID: conversationID, TurnID: turnID, Type: chat.TurnCompleted, Data: map[string]string{"message_id": assistantMessage.ID}})
+}
+
+func (a *application) failTurn(scope identity.Scope, conversationID, turnID string, cause error) {
+	_, _ = a.turns.Fail(context.Background(), scope, turnID, cause)
+	_ = a.emitTurnEvent(context.Background(), scope, chat.Event{ID: stableAPIID("event", turnID+"\x00failed"), ConversationID: conversationID, TurnID: turnID, Type: chat.TurnFailed, Data: map[string]string{"error": boundedString(cause.Error(), 1000)}})
+}
+
+func (a *application) cancelledTurn(scope identity.Scope, conversationID, turnID string) {
+	_, _ = a.turns.Complete(context.Background(), scope, turnID, "")
+	_ = a.emitTurnEvent(context.Background(), scope, chat.Event{ID: stableAPIID("event", turnID+"\x00cancelled"), ConversationID: conversationID, TurnID: turnID, Type: chat.TurnCancelledEvent, Data: map[string]string{"status": string(chat.TurnStatusCancelled)}})
+}
+
+func (a *application) emitTurnEvent(ctx context.Context, scope identity.Scope, value chat.Event) error {
+	_, err := a.chat.AppendEvent(ctx, scope, value)
+	return err
+}
+
+func boundedString(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > limit {
+		return string(runes[:limit])
+	}
+	return string(runes)
+}
+
+func (a *application) conversationCancel(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	turnID := strings.TrimSpace(request.URL.Query().Get("turn_id"))
+	if turnID == "" {
+		turnID = strings.TrimSpace(request.Header.Get("X-Turn-ID"))
+	}
+	if turnID == "" && request.Body != nil && request.ContentLength != 0 {
+		var body struct {
+			TurnID string `json:"turn_id"`
+		}
+		if err := decodeJSON(w, request, &body); err != nil {
+			return
+		}
+		turnID = strings.TrimSpace(body.TurnID)
+	}
+	if turnID == "" {
+		writeError(w, http.StatusBadRequest, "TURN_ID_REQUIRED", errors.New("turn_id is required"), false)
+		return
+	}
+	turn, err := a.turns.Get(request.Context(), scope, turnID)
+	if err != nil {
+		writeDomainError(w, "TURN_READ_FAILED", err)
+		return
+	}
+	if turn.ConversationID != request.PathValue("id") {
+		writeError(w, http.StatusNotFound, "TURN_NOT_FOUND", chat.ErrTurnNotFound, false)
+		return
+	}
+	turn, err = a.turns.Cancel(request.Context(), scope, turnID)
+	if err != nil {
+		writeDomainError(w, "TURN_CANCEL_FAILED", err)
+		return
+	}
+	a.turnMu.Lock()
+	if cancel := a.turnCancels[turnID]; cancel != nil {
+		cancel()
+	}
+	a.turnMu.Unlock()
+	if turn.Status == chat.TurnStatusCancelled {
+		_ = a.emitTurnEvent(request.Context(), scope, chat.Event{ID: stableAPIID("event", turnID+"\x00cancelled"), ConversationID: turn.ConversationID, TurnID: turnID, Type: chat.TurnCancelledEvent, Data: map[string]string{"status": string(turn.Status)}})
+	}
+	writeJSON(w, http.StatusOK, turn)
 }
 
 func (a *application) eventsStream(w http.ResponseWriter, request *http.Request) {
@@ -1122,30 +1451,33 @@ func (a *application) eventsStream(w http.ResponseWriter, request *http.Request)
 		return
 	}
 	after := int64(0)
-	if value := request.Header.Get("Last-Event-ID"); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 64)
+	headerCursor := strings.TrimSpace(request.Header.Get("Last-Event-ID"))
+	if headerCursor != "" {
+		parsed, err := strconv.ParseInt(headerCursor, 10, 64)
 		if err != nil || parsed < 0 {
 			writeError(w, http.StatusBadRequest, "INVALID_EVENT_CURSOR", errors.New("Last-Event-ID must be a non-negative integer"), false)
 			return
 		}
 		after = parsed
 	}
-	if value := request.URL.Query().Get("after"); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || parsed < 0 {
-			writeError(w, http.StatusBadRequest, "INVALID_EVENT_CURSOR", errors.New("after must be a non-negative integer"), false)
-			return
+	if headerCursor == "" {
+		if value := request.URL.Query().Get("after"); value != "" {
+			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || parsed < 0 {
+				writeError(w, http.StatusBadRequest, "INVALID_EVENT_CURSOR", errors.New("after must be a non-negative integer"), false)
+				return
+			}
+			after = parsed
 		}
-		after = parsed
 	}
 	conversationID := request.PathValue("id")
-	if _, err := a.chat.GetConversation(request.Context(), a.scope, conversationID); err != nil {
-		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
 		return
 	}
-	events, err := a.chat.ListEvents(request.Context(), a.scope, conversationID, after, parseLimit(request.URL.Query().Get("limit"), chat.MaxLimit))
-	if err != nil {
-		writeDomainError(w, "EVENT_LIST_FAILED", err)
+	if _, err := a.chat.GetConversation(request.Context(), scope, conversationID); err != nil {
+		writeDomainError(w, "CONVERSATION_READ_FAILED", err)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -1156,15 +1488,493 @@ func (a *application) eventsStream(w http.ResponseWriter, request *http.Request)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Connection", "keep-alive")
-	for _, value := range events {
-		encoded, encodeErr := json.Marshal(value)
-		if encodeErr != nil {
-			continue
+	limit := parseLimit(request.URL.Query().Get("limit"), chat.MaxLimit)
+	writeEvents := func(events []chat.Event) error {
+		for _, value := range events {
+			encoded, encodeErr := json.Marshal(value)
+			if encodeErr != nil {
+				continue
+			}
+			if _, writeErr := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", value.Sequence, value.Type, encoded); writeErr != nil {
+				return writeErr
+			}
+			after = value.Sequence
 		}
-		_, _ = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", value.Sequence, value.Type, encoded)
+		return nil
 	}
-	_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+	if events, listErr := a.chat.ListEvents(request.Context(), scope, conversationID, after, limit); listErr != nil {
+		writeDomainError(w, "EVENT_LIST_FAILED", listErr)
+		return
+	} else if err := writeEvents(events); err != nil {
+		return
+	}
+	if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
+
+	idle := 15 * time.Second
+	if raw := request.URL.Query().Get("idle"); raw != "" {
+		seconds, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || seconds < 0 || seconds > 120 {
+			writeError(w, http.StatusBadRequest, "INVALID_STREAM_IDLE", errors.New("idle must be between 0 and 120 seconds"), false)
+			return
+		}
+		idle = time.Duration(seconds) * time.Second
+	}
+	if idle == 0 {
+		return
+	}
+	poll := time.NewTicker(500 * time.Millisecond)
+	heartbeat := time.NewTicker(5 * time.Second)
+	defer poll.Stop()
+	defer heartbeat.Stop()
+	idleTimer := time.NewTimer(idle)
+	defer idleTimer.Stop()
+	for {
+		select {
+		case <-request.Context().Done():
+			return
+		case <-idleTimer.C:
+			return
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-poll.C:
+			events, listErr := a.chat.ListEvents(request.Context(), scope, conversationID, after, limit)
+			if listErr != nil {
+				return
+			}
+			if len(events) == 0 {
+				continue
+			}
+			if err := writeEvents(events); err != nil {
+				return
+			}
+			flusher.Flush()
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(idle)
+		}
+	}
+}
+
+func (a *application) tasksRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	projectID := strings.TrimSpace(request.URL.Query().Get("project_id"))
+	if projectID == "" {
+		projectID = a.config.ProjectID
+	}
+	values, err := a.coordinator.ListTasks(request.Context(), scope.TenantID, scope.UserID, projectID, parseLimit(request.URL.Query().Get("limit"), 20))
+	if err != nil {
+		writeDomainError(w, "TASK_LIST_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tasks": values})
+}
+
+func (a *application) taskRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	value, err := a.coordinator.GetTaskForScope(request.Context(), scope.TenantID, scope.UserID, request.PathValue("id"))
+	if err != nil {
+		writeDomainError(w, "TASK_READ_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+
+func (a *application) taskRetry(w http.ResponseWriter, request *http.Request) {
+	a.transitionTask(w, request, agents.Pending, "retrying", 0, "")
+}
+
+func (a *application) taskCancel(w http.ResponseWriter, request *http.Request) {
+	a.transitionTask(w, request, agents.Cancelled, "cancelled", 0, "cancelled by user")
+}
+
+func (a *application) transitionTask(w http.ResponseWriter, request *http.Request, status agents.TaskStatus, phase string, progress int, failure string) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	task, err := a.coordinator.GetTaskForScope(request.Context(), scope.TenantID, scope.UserID, request.PathValue("id"))
+	if err != nil {
+		writeDomainError(w, "TASK_READ_FAILED", err)
+		return
+	}
+	updated, err := a.coordinator.Transition(request.Context(), task, status, phase, progress, failure)
+	if err != nil {
+		writeDomainError(w, "TASK_TRANSITION_FAILED", err)
+		return
+	}
+	a.emitTaskTransition(request.Context(), scope, updated)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (a *application) taskHeartbeat(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	task, err := a.coordinator.GetTaskForScope(request.Context(), scope.TenantID, scope.UserID, request.PathValue("id"))
+	if err != nil {
+		writeDomainError(w, "TASK_READ_FAILED", err)
+		return
+	}
+	owner := a.config.InstanceID
+	seconds := 60
+	if raw := request.URL.Query().Get("seconds"); raw != "" {
+		seconds, err = strconv.Atoi(raw)
+		if err != nil || seconds < 1 || seconds > 3600 {
+			writeError(w, http.StatusBadRequest, "INVALID_LEASE_DURATION", errors.New("seconds must be between 1 and 3600"), false)
+			return
+		}
+	}
+	updated, err := a.coordinator.Heartbeat(request.Context(), task, owner, time.Now().UTC().Add(time.Duration(seconds)*time.Second))
+	if err != nil {
+		writeDomainError(w, "TASK_HEARTBEAT_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (a *application) emitTaskTransition(ctx context.Context, scope identity.Scope, task agents.Task) {
+	if task.ConversationID == "" {
+		return
+	}
+	_ = a.emitTurnEvent(ctx, scope, chat.Event{
+		ID:             stableAPIID("event", task.ID+"\x00"+string(task.Status)+"\x00"+strconv.Itoa(task.Progress)+"\x00"+strconv.Itoa(task.RetryCount)+"\x00"+strconv.FormatInt(task.UpdatedAt.UnixNano(), 10)),
+		ConversationID: task.ConversationID, TurnID: task.TurnID, TaskID: task.ID,
+		Type: chat.EventType("task." + string(task.Status)),
+		Data: map[string]string{"task_id": task.ID, "status": string(task.Status), "progress": strconv.Itoa(task.Progress), "phase": boundedString(task.Phase, 80)},
+	})
+}
+
+type briefingRunRequest struct {
+	ProjectID      string `json:"project_id,omitempty"`
+	Date           string `json:"date,omitempty"`
+	Timezone       string `json:"timezone,omitempty"`
+	QuietStart     string `json:"quiet_start,omitempty"`
+	QuietEnd       string `json:"quiet_end,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+}
+
+func (a *application) briefingsRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	projectID := request.URL.Query().Get("project_id")
+	if projectID == "" {
+		projectID = a.config.ProjectID
+	}
+	query := briefing.BriefingListQuery{Scope: scope, ProjectID: projectID, IncludeItems: request.URL.Query().Get("include_items") == "1", Limit: parseLimit(request.URL.Query().Get("limit"), briefing.DefaultListLimit)}
+	query.From = briefing.Date(request.URL.Query().Get("from"))
+	query.To = briefing.Date(request.URL.Query().Get("to"))
+	values, err := a.briefings.ListBriefings(request.Context(), query)
+	if err != nil {
+		writeDomainError(w, "BRIEFING_LIST_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"briefings": values})
+}
+
+func (a *application) briefingRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	projectID := request.URL.Query().Get("project_id")
+	if projectID == "" {
+		projectID = a.config.ProjectID
+	}
+	value, err := a.briefings.GetBriefing(request.Context(), scope, projectID, briefing.Date(request.PathValue("date")))
+	if err != nil {
+		writeDomainError(w, "BRIEFING_READ_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+
+func (a *application) briefingRun(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	body := briefingRunRequest{}
+	if request.Body != nil && request.ContentLength != 0 {
+		if err := decodeJSON(w, request, &body); err != nil {
+			return
+		}
+	}
+	value, conversationID, err := a.buildBriefing(request.Context(), scope, body)
+	if err != nil {
+		writeDomainError(w, "BRIEFING_RUN_FAILED", err)
+		return
+	}
+	if conversationID != "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"briefing": value, "conversation_id": conversationID})
+		return
+	}
+	writeJSON(w, http.StatusCreated, value)
+}
+
+func (a *application) buildBriefing(ctx context.Context, scope identity.Scope, body briefingRunRequest) (briefing.Briefing, string, error) {
+	projectID := strings.TrimSpace(body.ProjectID)
+	if projectID == "" {
+		projectID = a.config.ProjectID
+	}
+	timezone := strings.TrimSpace(body.Timezone)
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return briefing.Briefing{}, "", fmt.Errorf("invalid timezone %q: %w", timezone, err)
+	}
+	date := strings.TrimSpace(body.Date)
+	if date == "" {
+		date = time.Now().In(location).Format("2006-01-02")
+	}
+	value := briefing.Briefing{TenantID: scope.TenantID, UserID: scope.UserID, ProjectID: projectID, Date: briefing.Date(date), Timezone: timezone, QuietHours: briefing.QuietHours{Start: body.QuietStart, End: body.QuietEnd, Timezone: timezone}}
+	if value.QuietHours.Start == "" && value.QuietHours.End == "" {
+		value.QuietHours.Start, value.QuietHours.End = "22:00", "07:00"
+	}
+	if recommendations, recommendationErr := a.graph.ListRecommendationsForScope(ctx, scope, projectID, 20); recommendationErr != nil {
+		value.ProviderFailures = append(value.ProviderFailures, briefing.ProviderFailure{Provider: "graph_recommendations", Code: "unavailable", Reason: boundedString(recommendationErr.Error(), briefing.MaxProviderFailureReason), Retryable: true})
+	} else {
+		for _, recommendation := range recommendations {
+			value.Items = append(value.Items, briefing.InboxItem{Provider: "graph", ProviderItemID: recommendation.ID, Kind: "recommendation", Title: recommendation.Title, Summary: recommendation.Why, URL: recommendation.Evidence.URL, ContentHash: recommendation.Evidence.ContentHash, PublishedAt: recommendation.CreatedAt})
+		}
+	}
+	if tasks, taskErr := a.coordinator.ListTasks(ctx, scope.TenantID, scope.UserID, projectID, 20); taskErr != nil {
+		value.ProviderFailures = append(value.ProviderFailures, briefing.ProviderFailure{Provider: "tasks", Code: "unavailable", Reason: boundedString(taskErr.Error(), briefing.MaxProviderFailureReason), Retryable: true})
+	} else {
+		for _, task := range tasks {
+			value.Items = append(value.Items, briefing.InboxItem{Provider: "nightshift", ProviderItemID: task.ID, Kind: "task", Title: "Task " + task.ID, Summary: fmt.Sprintf("%s · %d%% complete", task.Status, task.Progress)})
+		}
+	}
+	a.stateMu.RLock()
+	collectionError := a.collection.Error
+	collection := a.collection
+	a.stateMu.RUnlock()
+	if collectionError != "" {
+		value.ProviderFailures = append(value.ProviderFailures, briefing.ProviderFailure{Provider: "collection", Code: "partial", Reason: boundedString(collectionError, briefing.MaxProviderFailureReason), Retryable: true})
+	}
+	// These providers are intentionally represented as explicit partial failures
+	// until their read-only adapters are configured; the report never hides a
+	// missing source behind an apparently complete briefing.
+	for _, provider := range []string{"mail", "calendar", "github", "reminders"} {
+		value.ProviderFailures = append(value.ProviderFailures, briefing.ProviderFailure{Provider: provider, Code: "not_configured", Reason: "provider is not configured in this deployment", Retryable: false})
+	}
+	if collection.Items > 0 {
+		value.Items = append(value.Items, briefing.InboxItem{Provider: "collection", ProviderItemID: stableAPIID("collection", date), Kind: "collection", Title: "Collection completed", Summary: fmt.Sprintf("Fetched %d items and produced %d recommendations.", collection.Items, collection.Recommendations)})
+	}
+	saved, err := a.briefings.SaveDaily(ctx, value)
+	if err != nil {
+		return briefing.Briefing{}, "", err
+	}
+	if quietHoursActive(time.Now().In(location), value.QuietHours) {
+		// The inbox remains durable, but chat delivery is deferred until the
+		// user's quiet hours end.
+		return saved, "", nil
+	}
+	conversationID := strings.TrimSpace(body.ConversationID)
+	if conversationID == "" {
+		conversations, listErr := a.chat.ListConversations(ctx, scope, chat.MaxLimit)
+		if listErr != nil {
+			return saved, "", listErr
+		}
+		title := "Daily briefing " + string(saved.Date)
+		for _, candidate := range conversations {
+			if candidate.Title == title {
+				conversationID = candidate.ID
+				break
+			}
+		}
+		if conversationID == "" {
+			created, createErr := a.chat.CreateConversation(ctx, scope, projectID, title)
+			if createErr != nil {
+				return saved, "", createErr
+			}
+			conversationID = created.ID
+			_, _ = a.chat.AppendEvent(ctx, scope, chat.Event{ID: stableAPIID("event", created.ID+"\x00created"), ConversationID: created.ID, Type: chat.ConversationCreated, Data: map[string]string{"title": created.Title}})
+		}
+	}
+	conversation, err := a.chat.GetConversation(ctx, scope, conversationID)
+	if err != nil {
+		return saved, "", err
+	}
+	message, err := a.chat.AddMessage(ctx, scope, chat.Message{ID: stableAPIID("message", saved.ID+"\x00report"), ConversationID: conversation.ID, Role: chat.RoleSystem, Content: boundedString(fmt.Sprintf("Daily briefing for %s is ready: %d inbox items, %d provider warnings.", saved.Date, len(saved.Items), len(saved.ProviderFailures)), chat.MaxMessage)})
+	if err != nil {
+		return saved, "", err
+	}
+	if _, err := a.chat.AppendEvent(ctx, scope, chat.Event{ID: stableAPIID("event", saved.ID+"\x00report"), ConversationID: conversation.ID, Type: chat.MessageCreated, Data: map[string]string{"message_id": message.ID, "role": string(chat.RoleSystem)}}); err != nil {
+		return saved, "", err
+	}
+	return saved, conversation.ID, nil
+}
+
+func quietHoursActive(now time.Time, hours briefing.QuietHours) bool {
+	if hours.Start == "" || hours.End == "" || hours.Start == hours.End {
+		return false
+	}
+	parse := func(value string) (int, bool) {
+		parts := strings.Split(value, ":")
+		if len(parts) != 2 {
+			return 0, false
+		}
+		hour, hourErr := strconv.Atoi(parts[0])
+		minute, minuteErr := strconv.Atoi(parts[1])
+		if hourErr != nil || minuteErr != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+			return 0, false
+		}
+		return hour*60 + minute, true
+	}
+	start, startOK := parse(hours.Start)
+	end, endOK := parse(hours.End)
+	if !startOK || !endOK {
+		return false
+	}
+	current := now.Hour()*60 + now.Minute()
+	if start < end {
+		return current >= start && current < end
+	}
+	return current >= start || current < end
+}
+
+func (a *application) briefingMarkRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	projectID := request.URL.Query().Get("project_id")
+	if projectID == "" {
+		projectID = a.config.ProjectID
+	}
+	items, err := a.briefings.ListInboxItems(request.Context(), briefing.InboxListQuery{Scope: scope, ProjectID: projectID, Date: briefing.Date(request.PathValue("date")), IncludeArchived: true, Limit: briefing.MaxListLimit})
+	if err != nil {
+		writeDomainError(w, "BRIEFING_READ_FAILED", err)
+		return
+	}
+	for _, item := range items {
+		if _, err := a.briefings.ReadInboxItem(request.Context(), scope, item.ID); err != nil {
+			writeDomainError(w, "INBOX_READ_FAILED", err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"date": request.PathValue("date"), "read": len(items)})
+}
+
+func (a *application) inboxRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	projectID := request.URL.Query().Get("project_id")
+	if projectID == "" {
+		projectID = a.config.ProjectID
+	}
+	items, err := a.briefings.ListInboxItems(request.Context(), briefing.InboxListQuery{Scope: scope, ProjectID: projectID, IncludeArchived: request.URL.Query().Get("include_archived") == "1", UnreadOnly: request.URL.Query().Get("unread_only") == "1", Limit: parseLimit(request.URL.Query().Get("limit"), briefing.DefaultListLimit)})
+	if err != nil {
+		writeDomainError(w, "INBOX_LIST_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+}
+
+func (a *application) inboxItemRead(w http.ResponseWriter, request *http.Request) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	item, err := a.briefings.GetInboxItem(request.Context(), scope, request.PathValue("id"))
+	if err != nil {
+		writeDomainError(w, "INBOX_READ_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (a *application) inboxMarkRead(w http.ResponseWriter, request *http.Request) {
+	a.inboxState(w, request, true)
+}
+
+func (a *application) inboxArchive(w http.ResponseWriter, request *http.Request) {
+	a.inboxState(w, request, false)
+}
+
+func (a *application) inboxState(w http.ResponseWriter, request *http.Request, read bool) {
+	if !a.requireReady(w) {
+		return
+	}
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	var item briefing.InboxItem
+	if read {
+		item, err = a.briefings.ReadInboxItem(request.Context(), scope, request.PathValue("id"))
+	} else {
+		item, err = a.briefings.ArchiveInboxItem(request.Context(), scope, request.PathValue("id"))
+	}
+	if err != nil {
+		writeDomainError(w, "INBOX_STATE_FAILED", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (a *application) searchRead(w http.ResponseWriter, request *http.Request) {
@@ -1232,7 +2042,7 @@ func formatSearchAnswer(result search.SearchResponse) (string, []chat.Citation) 
 		builder.WriteString("\n")
 		citations = append(citations, chat.Citation{URL: value.URL, Title: value.Title, Source: value.Source, Excerpt: value.Snippet})
 	}
-	return strings.TrimSpace(builder.String()), citations
+	return boundedString(builder.String(), chat.MaxMessage), citations
 }
 
 type sourceRequest struct {
@@ -1383,7 +2193,9 @@ func writeDomainError(w http.ResponseWriter, code string, err error) {
 	if errors.Is(err, profile.ErrProfileNotFound) || errors.Is(err, project.ErrProjectNotFound) ||
 		errors.Is(err, requirement.ErrRequirementNotFound) || errors.Is(err, session.ErrSessionNotFound) ||
 		errors.Is(err, session.ErrDecisionNotFound) || errors.Is(err, chat.ErrConversationNotFound) ||
-		errors.Is(err, chat.ErrMessageNotFound) {
+		errors.Is(err, chat.ErrMessageNotFound) || errors.Is(err, chat.ErrTurnNotFound) ||
+		errors.Is(err, agents.ErrTaskNotFound) || errors.Is(err, briefing.ErrBriefingNotFound) ||
+		errors.Is(err, briefing.ErrInboxItemNotFound) {
 		status = http.StatusNotFound
 	} else if strings.Contains(strings.ToLower(err.Error()), "graph") || strings.Contains(strings.ToLower(err.Error()), "falkor") {
 		status = http.StatusBadGateway
@@ -1439,7 +2251,12 @@ func (a *application) recommendations(w http.ResponseWriter, request *http.Reque
 	if projectID == "" {
 		projectID = a.config.ProjectID
 	}
-	items, err := a.graph.ListRecommendations(ctx, a.scope.UserID, projectID, parseLimit(request.URL.Query().Get("limit"), 10))
+	scope, err := a.trustedScope(request)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "SCOPE_REQUIRED", err, false)
+		return
+	}
+	items, err := a.graph.ListRecommendationsForScope(ctx, scope, projectID, parseLimit(request.URL.Query().Get("limit"), 10))
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "RECOMMENDATIONS_UNAVAILABLE", err, true)
 		return
@@ -1564,6 +2381,7 @@ func (a *application) mcpTools(w http.ResponseWriter, _ *http.Request) {
 		{"name": string(mcp.RetrieveMemory), "description": "Retrieve bounded typed memories from the user graph."},
 		{"name": string(mcp.ProposePlan), "description": "Persist a planner task and approval-gated local plan proposal."},
 		{"name": string(mcp.RecordFeedback), "description": "Persist user feedback and its evolving memory."},
+		{"name": string(mcp.SearchWeb), "description": "Search the configured web provider through a bounded typed request."},
 	}})
 }
 
@@ -1619,6 +2437,14 @@ func (a *application) mcpInvoke(w http.ResponseWriter, request *http.Request) {
 		}
 		value.Meta = meta
 		input = value
+	case mcp.SearchWeb:
+		value := mcp.SearchWebInput{}
+		if err := json.Unmarshal(envelope.Input, &value); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_TOOL_INPUT", err, false)
+			return
+		}
+		value.Meta = meta
+		input = value
 	default:
 		writeError(w, http.StatusNotFound, "UNKNOWN_TOOL", fmt.Errorf("unknown tool %q", envelope.Tool), false)
 		return
@@ -1657,7 +2483,7 @@ func (e localPlanExecutor) Execute(ctx context.Context, action actions.Action) (
 }
 
 func decodeJSON(w http.ResponseWriter, request *http.Request, destination interface{}) error {
-	request.Body = http.MaxBytesReader(w, request.Body, 16*1024)
+	request.Body = http.MaxBytesReader(w, request.Body, 64*1024)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -1670,6 +2496,24 @@ func decodeJSON(w http.ResponseWriter, request *http.Request, destination interf
 		return trailing
 	}
 	return nil
+}
+
+func parseCursor(value, label string) (int64, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", label)
+	}
+	return parsed, nil
+}
+
+func nextMessageCursor(values []chat.Message, limit int) interface{} {
+	if len(values) < limit || len(values) == 0 {
+		return nil
+	}
+	return values[len(values)-1].Sequence
 }
 
 func parseLimit(value string, fallback int) int {

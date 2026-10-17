@@ -3,162 +3,1455 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NightShift · personal agent</title>
+    <meta name="theme-color" content="#0c1220">
+    <title>NightShift · developer context</title>
     <style>
       :root {
         color-scheme: dark;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
-        --bg: #0b1020; --panel: #121a2b; --panel-soft: #17223a;
-        --line: #293957; --text: #eef4ff; --muted: #9eacc6;
-        --accent: #7dd3fc; --good: #86efac; --warn: #fcd34d;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --bg: #080d18;
+        --bg-raised: #0d1525;
+        --panel: #111b2d;
+        --panel-strong: #16243b;
+        --panel-muted: #0f1929;
+        --line: #263753;
+        --line-soft: #1d2b43;
+        --text: #edf4ff;
+        --muted: #9baac3;
+        --faint: #6f7e97;
+        --accent: #71d5f7;
+        --accent-strong: #1b9ac2;
+        --accent-wash: #0d3044;
+        --green: #7de2a5;
+        --green-wash: #123527;
+        --yellow: #f6d36b;
+        --yellow-wash: #3b3016;
+        --red: #ff9e9e;
+        --red-wash: #3c2028;
+        --purple: #c4b5fd;
+        --shadow: 0 18px 48px #00000030;
       }
+
       * { box-sizing: border-box; }
-      body { margin: 0; min-width: 320px; background: radial-gradient(circle at top, #17213b 0, var(--bg) 48rem); color: var(--text); }
-      button, textarea { font: inherit; }
-      button { border: 1px solid #365276; border-radius: 9px; padding: .55rem .8rem; background: #1d2c48; color: var(--text); cursor: pointer; }
-      button:hover { border-color: var(--accent); } button:disabled { cursor: wait; opacity: .55; }
-      .shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
-      aside { border-right: 1px solid var(--line); padding: 1.25rem; background: #0c1426cc; }
-      main { display: flex; min-width: 0; flex-direction: column; max-width: 1100px; width: 100%; margin: 0 auto; padding: 1.4rem 1.25rem; }
-      .brand { margin-bottom: 1.4rem; } .eyebrow { color: var(--accent); font-size: .72rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-      h1 { margin: .35rem 0 .45rem; font-size: 1.8rem; letter-spacing: -.05em; } h2 { margin: 0; font-size: 1rem; }
-      p { color: var(--muted); line-height: 1.5; } .subtle { color: var(--muted); font-size: .82rem; }
-      .new { width: 100%; margin-bottom: 1rem; background: #075985; } .conversation-list { display: grid; gap: .45rem; }
-      .conversation { display: block; width: 100%; overflow: hidden; border-color: transparent; background: transparent; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-      .conversation.active { border-color: #365276; background: var(--panel-soft); }
-      .status { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
-      .status-badge { border: 1px solid var(--line); border-radius: 999px; padding: .35rem .65rem; color: var(--muted); font-size: .78rem; }
-      .status-badge.ready { color: var(--good); border-color: #285a43; }
-      .messages { flex: 1; min-height: 360px; overflow-y: auto; padding: .5rem 0 1.5rem; }
-      .empty { border: 1px dashed var(--line); border-radius: 12px; padding: 1rem; color: var(--muted); }
-      .message { max-width: 78%; margin: .8rem 0; border: 1px solid var(--line); border-radius: 14px; padding: .8rem 1rem; background: var(--panel); white-space: pre-wrap; line-height: 1.5; }
-      .message.user { margin-left: auto; border-color: #265578; background: #10314d; }
-      .message.progress, .message.tool { border-style: dashed; color: var(--muted); }
-      .message-role { margin-bottom: .3rem; color: var(--accent); font-size: .7rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-      .composer { border: 1px solid var(--line); border-radius: 14px; padding: .7rem; background: var(--panel); }
-      textarea { display: block; width: 100%; min-height: 70px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.45; }
-      .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .4rem; }
-      .send { background: #075985; } .error { color: #fde68a; }
-      .right-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin-top: 1rem; }
-      .metric { border: 1px solid var(--line); border-radius: 11px; padding: .75rem; background: var(--panel); }
-      .metric-label { color: var(--muted); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
-      .metric-value { margin-top: .25rem; font-size: .95rem; font-weight: 700; }
-      @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } .conversation-list { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } .message { max-width: 94%; } }
+      html, body { min-width: 320px; min-height: 100%; }
+      body {
+        margin: 0;
+        color: var(--text);
+        background: radial-gradient(circle at 38% -10%, #1b2d4d 0, var(--bg) 42rem);
+      }
+      button, input, textarea { font: inherit; }
+      button { color: inherit; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      button:not(:disabled) { cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: .55; }
+      a { color: var(--accent); }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+      .app-shell { display: grid; grid-template-columns: 286px minmax(0, 1fr); min-height: 100vh; }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        display: flex;
+        height: 100vh;
+        min-width: 0;
+        flex-direction: column;
+        gap: 1rem;
+        border-right: 1px solid var(--line);
+        padding: 1.35rem 1rem 1rem;
+        background: #0b1322e8;
+        backdrop-filter: blur(16px);
+      }
+      .brand { padding: 0 .25rem; }
+      .eyebrow, .section-kicker, .message-role, .metric-label, .card-label {
+        color: var(--accent);
+        font-size: .68rem;
+        font-weight: 800;
+        letter-spacing: .11em;
+        text-transform: uppercase;
+      }
+      .brand h1 { margin: .24rem 0 .28rem; font-size: 1.65rem; letter-spacing: -.055em; }
+      .brand p { margin: 0; color: var(--muted); font-size: .79rem; line-height: 1.45; }
+      .new-button, .primary-button { border: 1px solid #1e84aa; background: linear-gradient(135deg, #0e648d, #07506d); }
+      .new-button { width: 100%; border-radius: 10px; padding: .68rem .82rem; text-align: left; }
+      .new-button span { margin-right: .35rem; color: #c9f3ff; font-size: 1.05rem; }
+      .sidebar-search { position: relative; }
+      .sidebar-search input, .search-form input, .modal input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0a1220;
+        color: var(--text);
+        padding: .62rem .72rem;
+      }
+      .sidebar-search input { padding-left: 2rem; font-size: .82rem; }
+      .sidebar-search::before { position: absolute; left: .7rem; top: .56rem; color: var(--faint); content: "⌕"; font-size: 1rem; pointer-events: none; }
+      .conversation-heading-row { display: flex; align-items: center; justify-content: space-between; padding: 0 .2rem; }
+      .conversation-heading-row .subtle { font-size: .72rem; }
+      .conversation-list { display: grid; min-height: 0; gap: .35rem; overflow: auto; padding-right: .15rem; }
+      .conversation-item {
+        display: block;
+        width: 100%;
+        overflow: hidden;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: .62rem .68rem;
+        background: transparent;
+        text-align: left;
+      }
+      .conversation-item:hover { border-color: var(--line); background: #122038; }
+      .conversation-item.active { border-color: #2c6482; background: #102d42; }
+      .conversation-title { display: block; overflow: hidden; font-size: .83rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+      .conversation-meta { display: flex; justify-content: space-between; gap: .5rem; margin-top: .25rem; color: var(--faint); font-size: .68rem; }
+      .sidebar-footer { display: flex; align-items: center; gap: .55rem; margin-top: auto; border-top: 1px solid var(--line-soft); padding: .85rem .25rem 0; color: var(--muted); font-size: .73rem; }
+      .status-dot { width: .5rem; height: .5rem; flex: 0 0 .5rem; border-radius: 999px; background: var(--yellow); box-shadow: 0 0 0 4px #f6d36b18; }
+      .status-dot.ready { background: var(--green); box-shadow: 0 0 0 4px #7de2a518; }
+      .status-dot.down { background: var(--red); box-shadow: 0 0 0 4px #ff9e9e18; }
+
+      .workspace { display: flex; min-width: 0; flex-direction: column; }
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        display: flex;
+        min-height: 4.4rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        border-bottom: 1px solid var(--line-soft);
+        padding: .8rem clamp(1rem, 3vw, 2.4rem);
+        background: #0a111edb;
+        backdrop-filter: blur(18px);
+      }
+      .topbar-leading { display: flex; min-width: 0; align-items: center; gap: .75rem; }
+      .mobile-menu { display: none; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: .45rem .6rem; }
+      .topbar-title { min-width: 0; }
+      .topbar-title strong { display: block; overflow: hidden; max-width: 38vw; font-size: .93rem; text-overflow: ellipsis; white-space: nowrap; }
+      .topbar-title span { display: block; margin-top: .15rem; color: var(--muted); font-size: .71rem; }
+      .connection-badge { display: inline-flex; align-items: center; gap: .4rem; border: 1px solid var(--line); border-radius: 999px; padding: .42rem .66rem; color: var(--muted); font-size: .71rem; white-space: nowrap; }
+      .connection-badge.ready { border-color: #286143; color: var(--green); }
+      .connection-badge.warn { border-color: #655426; color: var(--yellow); }
+      .connection-badge.error { border-color: #6e313c; color: var(--red); }
+      .connection-badge .status-dot { width: .42rem; height: .42rem; flex-basis: .42rem; box-shadow: none; }
+
+      .content { width: min(1180px, 100%); margin: 0 auto; padding: 1rem clamp(1rem, 3vw, 2.4rem) 2.5rem; }
+      .view-tabs { display: flex; gap: .35rem; overflow-x: auto; margin: 0 0 1.25rem; padding-bottom: .25rem; scrollbar-width: thin; }
+      .view-tab { flex: 0 0 auto; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: .5rem .7rem; color: var(--muted); font-size: .77rem; }
+      .view-tab:hover { border-color: var(--line); color: var(--text); }
+      .view-tab.active { border-color: #2c6482; background: var(--accent-wash); color: var(--accent); }
+      .view { display: none; }
+      .view.active { display: block; }
+      .view-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+      .view-heading h2 { margin: .18rem 0 .28rem; font-size: 1.38rem; letter-spacing: -.04em; }
+      .view-heading p { max-width: 690px; margin: 0; color: var(--muted); font-size: .83rem; line-height: 1.5; }
+      .heading-actions, .button-row { display: flex; flex-wrap: wrap; gap: .45rem; }
+      .icon-button, .secondary-button, .quiet-button, .danger-button { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: .5rem .68rem; font-size: .74rem; }
+      .secondary-button:hover, .icon-button:hover, .quiet-button:hover { border-color: var(--accent); }
+      .danger-button { border-color: #69323e; color: var(--red); }
+      .quiet-button { background: transparent; color: var(--muted); }
+      .primary-button { border-radius: 8px; padding: .55rem .8rem; font-size: .75rem; }
+      .subtle { color: var(--muted); }
+      .faint { color: var(--faint); }
+      .error-text { color: var(--red); }
+      .warning-text { color: var(--yellow); }
+      .empty-state, .unavailable-state, .error-state {
+        border: 1px dashed var(--line);
+        border-radius: 13px;
+        background: #0e1728aa;
+        padding: 1.15rem;
+      }
+      .empty-state strong, .unavailable-state strong, .error-state strong { display: block; margin-bottom: .32rem; font-size: .86rem; }
+      .empty-state p, .unavailable-state p, .error-state p { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+
+      .chat-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(230px, 280px); align-items: start; gap: 1rem; }
+      .chat-column { min-width: 0; }
+      .conversation-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; margin-bottom: .8rem; }
+      .conversation-head h2 { overflow: hidden; margin: 0 0 .24rem; font-size: 1.2rem; letter-spacing: -.035em; text-overflow: ellipsis; white-space: nowrap; }
+      .conversation-head p { margin: 0; color: var(--muted); font-size: .73rem; }
+      .message-list { display: grid; min-height: 310px; max-height: min(58vh, 680px); gap: .72rem; overflow-y: auto; padding: .45rem .25rem 1rem .05rem; scroll-behavior: smooth; }
+      .message {
+        max-width: min(85%, 760px);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        padding: .78rem .9rem;
+        box-shadow: 0 8px 24px #00000012;
+      }
+      .message.user { margin-left: auto; border-color: #245b79; background: #10324a; }
+      .message.assistant { border-color: #314866; background: #121e31; }
+      .message.system { border-color: #554a27; background: #272317; }
+      .message.tool { border-style: dashed; border-color: #51447b; background: #1b1830; }
+      .message.progress { border-style: dashed; border-color: #30647a; background: #102531; }
+      .message.streaming { border-color: var(--accent-strong); box-shadow: 0 0 0 1px #1b9ac222; }
+      .message-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .35rem; }
+      .message-role { color: var(--muted); font-size: .63rem; }
+      .message.user .message-role { color: #9fdbf4; }
+      .message.assistant .message-role { color: var(--accent); }
+      .message.system .message-role { color: var(--yellow); }
+      .message.tool .message-role { color: var(--purple); }
+      .message-time { color: var(--faint); font-size: .63rem; white-space: nowrap; }
+      .message-content { color: #e6eefc; font-size: .86rem; line-height: 1.58; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .message-footer { display: flex; flex-wrap: wrap; gap: .42rem; margin-top: .68rem; }
+      .citation-button { display: inline-flex; align-items: center; gap: .25rem; max-width: 100%; overflow: hidden; border: 1px solid #2d5572; border-radius: 7px; background: #10273a; padding: .35rem .48rem; color: #a9e2f7; font-size: .68rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+      .citation-button:hover { border-color: var(--accent); }
+      .stream-cursor { display: inline-block; width: .42rem; height: 1em; margin-left: .22rem; vertical-align: -.13em; background: var(--accent); animation: blink 1s step-end infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+      .composer {
+        margin-top: .25rem;
+        border: 1px solid #304562;
+        border-radius: 14px;
+        background: var(--panel);
+        padding: .72rem;
+        box-shadow: var(--shadow);
+      }
+      .composer textarea { display: block; width: 100%; min-height: 76px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font-size: .88rem; line-height: 1.5; }
+      .composer textarea::placeholder { color: #71819a; }
+      .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-top: .45rem; }
+      .composer-help { overflow: hidden; color: var(--muted); font-size: .69rem; text-overflow: ellipsis; white-space: nowrap; }
+      .send-button { border: 1px solid #1e84aa; border-radius: 8px; background: #075a7a; padding: .55rem .85rem; font-size: .74rem; }
+      .live-panel { margin-top: .85rem; }
+      .live-panel h3, .side-panel h3 { margin: 0 0 .55rem; font-size: .78rem; }
+      .activity-list { display: grid; gap: .5rem; }
+      .activity-list:empty { display: none; }
+      .side-panel { border: 1px solid var(--line); border-radius: 13px; background: #0e1728b8; padding: .82rem; }
+      .side-panel + .side-panel { margin-top: .75rem; }
+      .side-panel p { margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+      .side-panel .metric-grid { grid-template-columns: 1fr 1fr; margin-top: .55rem; }
+      .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; }
+      .metric { min-width: 0; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); padding: .7rem; }
+      .metric-label { color: var(--muted); font-size: .61rem; }
+      .metric-value { overflow: hidden; margin-top: .3rem; font-size: .87rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+
+      .panel-card, .recommendation-card, .operational-card, .search-result, .health-card { border: 1px solid var(--line); border-radius: 13px; background: var(--panel); padding: .85rem; }
+      .panel-card + .panel-card, .recommendation-card + .recommendation-card, .search-result + .search-result, .health-card + .health-card { margin-top: .7rem; }
+      .panel-card h3, .recommendation-card h3, .search-result h3, .health-card h3 { margin: 0 0 .35rem; font-size: .89rem; }
+      .panel-card p, .recommendation-card p, .search-result p, .health-card p { margin: .3rem 0 0; color: var(--muted); font-size: .77rem; line-height: 1.5; }
+      .panel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .7rem; margin: 0 0 .8rem; }
+      .panel-toolbar h3 { margin: 0; font-size: .87rem; }
+      .panel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
+      .panel-grid .panel-card { margin: 0; }
+      .panel-grid .wide { grid-column: 1 / -1; }
+      .recommendation-card { position: relative; }
+      .recommendation-top { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+      .recommendation-top h3 { font-size: .92rem; }
+      .score { flex: 0 0 auto; border: 1px solid #4c5d31; border-radius: 999px; background: #24331b; padding: .25rem .46rem; color: var(--green); font-size: .68rem; }
+      .recommendation-meta { display: flex; flex-wrap: wrap; gap: .35rem .65rem; margin-top: .55rem; color: var(--faint); font-size: .68rem; }
+      .recommendation-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .72rem; }
+      .path-preview { overflow: hidden; margin-top: .55rem; color: #b5c8e6; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+      .path-preview::before { margin-right: .35rem; color: var(--accent); content: "↳"; }
+      .notice { border: 1px solid #3f3c25; border-radius: 10px; background: #211e12; padding: .65rem .75rem; color: var(--yellow); font-size: .74rem; line-height: 1.45; }
+      .notice + .panel-grid, .notice + .panel-card, .notice + .recommendation-card { margin-top: .75rem; }
+      .search-form { display: flex; gap: .45rem; margin-bottom: .8rem; }
+      .search-form input { min-width: 0; flex: 1; }
+      .result-url { display: block; overflow: hidden; margin-top: .42rem; color: var(--accent); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+      .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; }
+      .health-card { min-width: 0; margin: 0 !important; }
+      .health-card .health-value { margin-top: .45rem; font-size: .82rem; font-weight: 700; overflow-wrap: anywhere; }
+      .health-card.ok { border-color: #286143; }
+      .health-card.bad { border-color: #6e313c; }
+      .health-card.pending { border-color: #655426; }
+      .task-list { display: grid; gap: .5rem; }
+      .task-list:empty { display: none; }
+
+      .operational-card { padding: .7rem .78rem; }
+      .operational-card.progress-card { border-color: #28647c; background: #102531; }
+      .operational-card.task-card { border-color: #4c5d31; background: #182719; }
+      .operational-card.diff-card { border-color: #51447b; background: #1b1830; }
+      .operational-card.test-card { border-color: #345e53; background: #122721; }
+      .operational-card.approval-card { border-color: #70582a; background: #2b2415; }
+      .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .6rem; }
+      .card-head strong { font-size: .77rem; }
+      .card-status { border: 1px solid currentColor; border-radius: 999px; padding: .2rem .4rem; color: var(--muted); font-size: .61rem; white-space: nowrap; }
+      .operational-card p { margin: .4rem 0 0; color: var(--muted); font-size: .73rem; line-height: 1.45; }
+      .card-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .55rem; }
+      .card-actions button { border: 1px solid var(--line); border-radius: 7px; background: #122038; padding: .34rem .5rem; font-size: .66rem; }
+      .code-block { max-height: 220px; overflow: auto; margin: .55rem 0 0; border: 1px solid #322b51; border-radius: 8px; background: #0b0b15; padding: .6rem; color: #d5ccff; font: .7rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .bar { height: .32rem; overflow: hidden; margin-top: .55rem; border-radius: 999px; background: #182238; }
+      .bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+
+      .drawer-backdrop { position: fixed; inset: 0; z-index: 20; background: #0008; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+      .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+      .details-drawer { position: fixed; top: 0; right: 0; z-index: 21; display: flex; width: min(440px, 94vw); height: 100vh; flex-direction: column; border-left: 1px solid var(--line); background: #0b1424; box-shadow: -20px 0 50px #0006; transform: translateX(102%); transition: transform .2s ease; }
+      .details-drawer.open { transform: translateX(0); }
+      .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; border-bottom: 1px solid var(--line); padding: 1rem; }
+      .drawer-head h2 { margin: .2rem 0 0; font-size: 1rem; }
+      .drawer-head p { margin: .25rem 0 0; color: var(--muted); font-size: .7rem; }
+      .drawer-body { flex: 1; overflow-y: auto; padding: 1rem; }
+      .drawer-body .detail-section + .detail-section { margin-top: 1rem; }
+      .detail-section h3 { margin: 0 0 .45rem; color: var(--muted); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+      .detail-section p { margin: 0; color: #d9e4f5; font-size: .79rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .detail-link { display: block; overflow-wrap: anywhere; font-size: .75rem; }
+      .path-list { display: grid; gap: .35rem; }
+      .path-node { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: .5rem; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel); padding: .5rem; }
+      .path-node + .path-node::before { position: absolute; }
+      .path-node-label { color: var(--accent); font-size: .64rem; font-weight: 800; text-transform: uppercase; }
+      .path-node-name { color: var(--text); font-size: .74rem; overflow-wrap: anywhere; }
+      .path-arrow { margin: -.22rem 0 -.22rem 1.15rem; color: var(--faint); font-size: .75rem; }
+
+      .modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #0009; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+      .modal-backdrop.open { opacity: 1; pointer-events: auto; }
+      .modal { width: min(420px, calc(100vw - 2rem)); border: 1px solid var(--line); border-radius: 14px; background: var(--bg-raised); box-shadow: var(--shadow); padding: 1rem; transform: translateY(8px); transition: transform .18s ease; }
+      .modal-backdrop.open .modal { transform: translateY(0); }
+      .modal h2 { margin: 0 0 .35rem; font-size: 1rem; }
+      .modal p { margin: 0 0 .8rem; color: var(--muted); font-size: .75rem; line-height: 1.45; }
+      .modal label { display: block; margin-bottom: .35rem; color: var(--muted); font-size: .72rem; }
+      .modal .button-row { justify-content: flex-end; margin-top: .8rem; }
+      .modal-error { min-height: 1.1rem; margin-top: .5rem; color: var(--red); font-size: .72rem; }
+      .toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 40; max-width: min(420px, calc(100vw - 2rem)); border: 1px solid var(--line); border-radius: 9px; background: #15243b; padding: .65rem .8rem; color: var(--text); font-size: .74rem; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transform: translateY(10px); transition: opacity .18s ease, transform .18s ease; }
+      .toast.show { opacity: 1; pointer-events: auto; transform: translateY(0); }
+
+      @media (max-width: 940px) {
+        .chat-layout { grid-template-columns: 1fr; }
+        .chat-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+        .side-panel + .side-panel { margin-top: 0; }
+      }
+      @media (max-width: 720px) {
+        .app-shell { display: block; }
+        .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 15; width: min(300px, 88vw); transform: translateX(-102%); transition: transform .2s ease; box-shadow: 20px 0 50px #0007; }
+        .sidebar.open { transform: translateX(0); }
+        .mobile-menu { display: inline-block; }
+        .topbar { min-height: 3.9rem; }
+        .topbar-title strong { max-width: 43vw; }
+        .connection-badge { padding: .38rem .5rem; }
+        .connection-badge span:last-child { display: none; }
+        .content { padding-top: .8rem; }
+        .view-heading { display: block; }
+        .view-heading .heading-actions { margin-top: .7rem; }
+        .metric-grid, .health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .panel-grid { grid-template-columns: 1fr; }
+        .panel-grid .wide { grid-column: auto; }
+        .chat-side { grid-template-columns: 1fr; }
+        .message { max-width: 94%; }
+        .message-list { max-height: 55vh; }
+      }
+      @media (max-width: 430px) {
+        .topbar { padding-inline: .75rem; }
+        .content { padding-inline: .75rem; }
+        .conversation-head { display: block; }
+        .conversation-head .heading-actions { margin-top: .55rem; }
+        .composer-footer { align-items: flex-end; }
+        .composer-help { max-width: 58%; white-space: normal; }
+        .search-form { display: grid; grid-template-columns: 1fr auto; }
+        .search-form input { grid-column: 1 / -1; }
+      }
     </style>
   </head>
   <body>
-    <div class="shell">
-      <aside>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="Conversations">
         <div class="brand">
-          <div class="eyebrow">FalkorDB-first personal agent</div>
+          <div class="eyebrow">FalkorDB-first developer context</div>
           <h1>NightShift</h1>
-          <div class="subtle">Chat, evidence, tasks, and approvals that survive restart.</div>
+          <p>Chat, evidence, tasks, and approvals that survive a restart.</p>
         </div>
-        <button class="new" id="new-conversation" type="button">+ New conversation</button>
-        <div class="subtle" style="margin-bottom:.5rem">Conversations</div>
-        <div id="conversation-list" class="conversation-list"><div class="empty">Loading…</div></div>
+        <button class="new-button" id="new-conversation" type="button"><span>＋</span> New conversation</button>
+        <div class="conversation-heading-row">
+          <div class="section-kicker">Conversations</div>
+          <span class="subtle" id="conversation-count">—</span>
+        </div>
+        <label class="sidebar-search">
+          <span class="sr-only">Filter conversations</span>
+          <input id="conversation-filter" type="search" placeholder="Filter conversations" autocomplete="off">
+        </label>
+        <div id="conversation-list" class="conversation-list" aria-live="polite">
+          <div class="empty-state"><strong>Loading conversations</strong><p>Connecting to the local service…</p></div>
+        </div>
+        <div class="sidebar-footer"><span class="status-dot" id="sidebar-status-dot"></span><span id="sidebar-status">Checking service</span></div>
       </aside>
-      <main>
-        <div class="status">
-          <div><h2 id="conversation-title">New conversation</h2><div class="subtle" id="conversation-detail">Durable chat stream</div></div>
-          <div class="status-badge" id="service-status">Checking service…</div>
-        </div>
-        <section id="messages" class="messages" aria-live="polite"><div class="empty">Ask NightShift what changed, search the web, or start a bounded coding task.</div></section>
-        <form id="composer" class="composer">
-          <textarea id="prompt" maxlength="32000" placeholder="Message NightShift…" aria-label="Message NightShift"></textarea>
-          <div class="composer-footer"><span id="composer-status" class="subtle">Messages are persisted in FalkorDB.</span><button class="send" id="send" type="submit">Send</button></div>
-        </form>
-        <section class="right-panel" aria-label="NightShift status">
-          <div class="metric"><div class="metric-label">Graph</div><div class="metric-value" id="graph-status">—</div></div>
-          <div class="metric"><div class="metric-label">Initialization</div><div class="metric-value" id="init-status">—</div></div>
-          <div class="metric"><div class="metric-label">Events</div><div class="metric-value" id="event-status">Replayable</div></div>
-        </section>
-      </main>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="topbar-leading">
+            <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open conversation sidebar" aria-expanded="false">☰</button>
+            <div class="topbar-title"><strong id="topbar-title">New conversation</strong><span id="topbar-detail">Durable chat stream</span></div>
+          </div>
+          <div class="connection-badge" id="connection-badge"><span class="status-dot"></span><span>Checking service…</span></div>
+        </header>
+
+        <main class="content">
+          <nav class="view-tabs" aria-label="NightShift views">
+            <button class="view-tab active" data-view="chat" type="button">Chat</button>
+            <button class="view-tab" data-view="morning" type="button">Morning</button>
+            <button class="view-tab" data-view="inbox" type="button">Inbox</button>
+            <button class="view-tab" data-view="search" type="button">Search</button>
+            <button class="view-tab" data-view="calendar" type="button">Calendar</button>
+            <button class="view-tab" data-view="reminders" type="button">Reminders</button>
+            <button class="view-tab" data-view="health" type="button">Health</button>
+          </nav>
+
+          <section class="view active" id="view-chat" data-view-panel="chat">
+            <div class="chat-layout">
+              <div class="chat-column">
+                <div class="conversation-head">
+                  <div>
+                    <h2 id="conversation-title">New conversation</h2>
+                    <p id="conversation-detail">Choose a conversation or start a new one.</p>
+                  </div>
+                  <div class="heading-actions">
+                    <button class="quiet-button" id="rename-conversation" type="button" disabled>Rename</button>
+                    <button class="danger-button" id="archive-conversation" type="button" disabled>Archive</button>
+                  </div>
+                </div>
+                <section class="message-list" id="messages" aria-live="polite" aria-label="Conversation messages">
+                  <div class="empty-state"><strong>Start with a question</strong><p>Ask what changed, search the web, explain a recommendation, or describe a bounded coding task.</p></div>
+                </section>
+                <section class="live-panel" aria-label="Live activity">
+                  <h3>Live activity</h3>
+                  <div class="activity-list" id="activity-list"></div>
+                </section>
+                <form class="composer" id="composer">
+                  <label class="sr-only" for="prompt">Message NightShift</label>
+                  <textarea id="prompt" maxlength="32000" placeholder="Message NightShift…" spellcheck="true"></textarea>
+                  <div class="composer-footer">
+                    <span class="composer-help" id="composer-status">Messages are persisted in FalkorDB when the service is ready.</span>
+                    <button class="send-button" id="send" type="submit">Send</button>
+                  </div>
+                </form>
+              </div>
+              <aside class="chat-side" aria-label="Conversation context">
+                <div class="side-panel">
+                  <h3>Conversation stream</h3>
+                  <p id="stream-status">No conversation selected. Events will reconnect from the last acknowledged sequence.</p>
+                  <div class="metric-grid">
+                    <div class="metric"><div class="metric-label">Messages</div><div class="metric-value" id="message-count">—</div></div>
+                    <div class="metric"><div class="metric-label">Events</div><div class="metric-value" id="event-count">—</div></div>
+                  </div>
+                </div>
+                <div class="side-panel">
+                  <h3>Graph context</h3>
+                  <p id="graph-context">Open Morning to inspect the current project path, recommendations, and persisted tasks.</p>
+                  <div class="button-row" style="margin-top:.6rem"><button class="secondary-button" id="open-morning" type="button">Open morning view</button></div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view" id="view-morning" data-view-panel="morning">
+            <div class="view-heading">
+              <div><div class="section-kicker">Graph briefing</div><h2>Morning context</h2><p>Durable daily reports combine graph recommendations, tasks, provider health, and inbox triage.</p></div>
+              <div class="heading-actions"><button class="primary-button" id="run-briefing" type="button">Run briefing</button><button class="secondary-button" id="run-collection" type="button">Run collection</button><button class="secondary-button" data-refresh-panel="morning" type="button">Refresh</button></div>
+            </div>
+            <div class="notice">Reports are idempotent per user, project, and local date. Provider failures remain visible instead of making a partial report look complete.</div>
+            <div id="morning-content" style="margin-top:.75rem"><div class="empty-state"><strong>Loading morning context</strong><p>Reading the project graph and recent recommendations…</p></div></div>
+          </section>
+
+          <section class="view" id="view-inbox" data-view-panel="inbox">
+            <div class="view-heading"><div><div class="section-kicker">Triage</div><h2>Inbox</h2><p>Reports, reminders, approvals, and unresolved work can land here when an inbox API is available.</p></div><button class="secondary-button" data-refresh-panel="inbox" type="button">Refresh</button></div>
+            <div id="inbox-content"><div class="empty-state"><strong>Inbox is waiting</strong><p>Checking whether this NightShift server exposes inbox records…</p></div></div>
+          </section>
+
+          <section class="view" id="view-search" data-view-panel="search">
+            <div class="view-heading"><div><div class="section-kicker">Public sources</div><h2>Search</h2><p>Search results are treated as untrusted evidence. Open a result to inspect the source before using it.</p></div></div>
+            <form class="search-form" id="search-form"><label class="sr-only" for="search-query">Search query</label><input id="search-query" maxlength="500" type="search" placeholder="Search technical sources…"><button class="primary-button" type="submit">Search</button></form>
+            <div id="search-content"><div class="empty-state"><strong>Search the configured provider</strong><p>Enter a query. If no provider is configured, the page will show that state without breaking chat.</p></div></div>
+          </section>
+
+          <section class="view" id="view-calendar" data-view-panel="calendar">
+            <div class="view-heading"><div><div class="section-kicker">Read-only context</div><h2>Calendar</h2><p>Today’s calendar can appear here when a read-only calendar integration is connected.</p></div><button class="secondary-button" data-refresh-panel="calendar" type="button">Refresh</button></div>
+            <div id="calendar-content"><div class="empty-state"><strong>Calendar data is not connected</strong><p>This server does not currently expose a calendar endpoint. No calendar changes are attempted by this page.</p></div></div>
+          </section>
+
+          <section class="view" id="view-reminders" data-view-panel="reminders">
+            <div class="view-heading"><div><div class="section-kicker">Follow-up</div><h2>Reminders</h2><p>Reminder records can be reviewed here without creating an external side effect.</p></div><button class="secondary-button" data-refresh-panel="reminders" type="button">Refresh</button></div>
+            <div id="reminders-content"><div class="empty-state"><strong>No reminder API is available</strong><p>The current server does not expose reminder records. The page remains usable and does not invent local reminders.</p></div></div>
+          </section>
+
+          <section class="view" id="view-health" data-view-panel="health">
+            <div class="view-heading"><div><div class="section-kicker">Operations</div><h2>Health</h2><p>Dependency and runtime state comes from the server’s liveness, readiness, and status endpoints.</p></div><button class="secondary-button" data-refresh-panel="health" type="button">Refresh</button></div>
+            <div id="health-content"><div class="empty-state"><strong>Loading health</strong><p>Checking liveness, readiness, and graph status…</p></div></div>
+          </section>
+        </main>
+      </div>
     </div>
+
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <aside class="details-drawer" id="details-drawer" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <div class="drawer-head"><div><div class="section-kicker">Evidence detail</div><h2 id="drawer-title">Details</h2><p id="drawer-subtitle"></p></div><button class="icon-button" id="close-drawer" type="button" aria-label="Close details">×</button></div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </aside>
+
+    <div class="modal-backdrop" id="conversation-modal-backdrop">
+      <form class="modal" id="conversation-modal">
+        <h2 id="modal-title">New conversation</h2>
+        <p id="modal-description">Give this conversation a short name. You can change it later.</p>
+        <label for="conversation-name">Conversation name</label>
+        <input id="conversation-name" maxlength="160" type="text" placeholder="e.g. Investigate release notes" autocomplete="off">
+        <div class="modal-error" id="modal-error" role="alert"></div>
+        <div class="button-row"><button class="quiet-button" id="cancel-modal" type="button">Cancel</button><button class="primary-button" id="save-modal" type="submit">Create</button></div>
+      </form>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
     <script>
-      const state = { conversations: [], current: null, lastEvent: 0, source: null };
-      const $ = selector => document.querySelector(selector);
-      const escapeHTML = value => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-      const roleLabel = role => ({user:'You', assistant:'NightShift', system:'System', tool:'Tool', progress:'Progress'}[role] || role);
+      (function () {
+        "use strict";
 
-      async function jsonRequest(url, options) {
-        const response = await fetch(url, options);
-        let body = {};
-        try { body = await response.json(); } catch (_) {}
-        if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`);
-        return body;
-      }
+        const $ = (selector, root) => (root || document).querySelector(selector);
+        const $$ = (selector, root) => Array.prototype.slice.call((root || document).querySelectorAll(selector));
+        const state = {
+          conversations: [],
+          current: null,
+          currentId: "",
+          messages: [],
+          events: new Map(),
+          lastEventId: 0,
+          eventSource: null,
+          eventGeneration: 0,
+          eventReconnectTimer: null,
+          eventOpenTimer: null,
+          eventConnected: false,
+          messagePollTimer: null,
+          refreshTimer: null,
+          refreshInFlight: false,
+          refreshQueued: false,
+          conversationGeneration: 0,
+          streaming: Object.create(null),
+          activeView: "chat",
+          panelLoaded: Object.create(null),
+          dashboard: null,
+          recommendations: [],
+          modalMode: "new",
+          toastTimer: null,
+          status: null
+        };
 
-      async function loadStatus() {
-        try {
-          const status = await jsonRequest('/api/v1/status');
-          const graph = status.graph || {};
-          $('#graph-status').textContent = graph.available ? `${graph.node_count || 0} nodes` : 'Offline';
-          $('#init-status').textContent = status.initialization || 'unknown';
-          $('#service-status').textContent = graph.available ? 'Graph connected' : 'Graph unavailable';
-          $('#service-status').classList.toggle('ready', Boolean(graph.available));
-        } catch (error) { $('#service-status').textContent = error.message; }
-      }
+        const EVENT_TYPES = [
+          "conversation.created", "message.created", "turn.started", "turn.progress", "assistant.delta",
+          "assistant.completed", "tool.started", "tool.progress", "tool.completed", "agent.started",
+          "agent.output", "agent.approval_required", "workspace.created", "workspace.diff_available",
+          "workspace.tests_started", "workspace.tests_completed", "task.created", "task.updated",
+          "task.completed", "task.failed", "task.cancelled", "turn.cancelled", "report.started", "report.ready",
+          "report.failed", "approval.required", "approval.approved", "approval.rejected", "action.started",
+          "action.completed", "action.failed", "run.completed", "run.failed"
+        ];
 
-      function renderConversations() {
-        const element = $('#conversation-list');
-        element.innerHTML = state.conversations.length ? state.conversations.map(item => `<button class="conversation ${state.current?.id === item.id ? 'active' : ''}" data-conversation="${escapeHTML(item.id)}" type="button">${escapeHTML(item.title)}</button>`).join('') : '<div class="empty">No conversations yet.</div>';
-        element.querySelectorAll('[data-conversation]').forEach(button => button.addEventListener('click', () => openConversation(button.dataset.conversation)));
-      }
+        function makeNode(tag, className, value) {
+          const node = document.createElement(tag);
+          if (className) node.className = className;
+          if (value !== undefined && value !== null) node.textContent = String(value);
+          return node;
+        }
 
-      function renderMessages(messages) {
-        const element = $('#messages');
-        element.innerHTML = messages.length ? messages.map(message => `<article class="message ${escapeHTML(message.role)}"><div class="message-role">${escapeHTML(roleLabel(message.role))}</div><div>${escapeHTML(message.content)}</div></article>`).join('') : '<div class="empty">Ask NightShift what changed, search the web, or start a bounded coding task.</div>';
-        element.scrollTop = element.scrollHeight;
-      }
+        function appendText(parent, tag, className, value) {
+          const node = makeNode(tag, className, value);
+          parent.appendChild(node);
+          return node;
+        }
 
-      function listenForEvents() {
-        if (!state.current) return;
-        if (state.source) state.source.close();
-        state.source = new EventSource(`/api/v1/conversations/${encodeURIComponent(state.current.id)}/events?after=${state.lastEvent}`);
-        const refresh = event => { if (event.lastEventId) state.lastEvent = Math.max(state.lastEvent, Number(event.lastEventId) || 0); openConversation(state.current.id, false); };
-        ['message.created', 'assistant.completed', 'turn.completed', 'turn.failed'].forEach(type => state.source.addEventListener(type, refresh));
-        state.source.onerror = () => { $('#event-status').textContent = 'Reconnecting…'; };
-      }
+        function stringValue(value, fallback) {
+          if (value === undefined || value === null || value === "") return fallback || "";
+          return String(value);
+        }
 
-      async function openConversation(id, reconnect = true) {
-        try {
-          const body = await jsonRequest(`/api/v1/conversations/${encodeURIComponent(id)}`);
-          state.current = body.conversation;
-          state.lastEvent = state.current.event_sequence || 0;
-          $('#conversation-title').textContent = state.current.title;
-          $('#conversation-detail').textContent = `${state.current.status} · ${state.current.id}`;
-          renderMessages(body.messages || []); renderConversations();
-          if (reconnect) listenForEvents();
-        } catch (error) { $('#messages').innerHTML = `<div class="empty error">${escapeHTML(error.message)}</div>`; }
-      }
+        function numberValue(value, fallback) {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : (fallback || 0);
+        }
 
-      async function loadConversations() {
-        const body = await jsonRequest('/api/v1/conversations');
-        state.conversations = body.conversations || [];
-        renderConversations();
-        if (state.conversations[0]) await openConversation(state.conversations[0].id);
-        else await createConversation();
-      }
+        function parseMaybeJSON(value) {
+          if (value && typeof value === "object") return value;
+          if (typeof value !== "string") return value;
+          try { return JSON.parse(value); } catch (_) { return value; }
+        }
 
-      async function createConversation() {
-        const value = await jsonRequest('/api/v1/conversations', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:'New conversation'})});
-        state.conversations.unshift(value); renderConversations(); await openConversation(value.id);
-      }
+        function errorMessage(error, fallback) {
+          return error && error.message ? error.message : (fallback || "The request could not be completed.");
+        }
 
-      $('#new-conversation').addEventListener('click', () => createConversation().catch(error => $('#composer-status').textContent = error.message));
-      $('#composer').addEventListener('submit', async event => {
-        event.preventDefault();
-        const prompt = $('#prompt').value.trim(); if (!prompt || !state.current) return;
-        const button = $('#send'); button.disabled = true; $('#composer-status').textContent = 'Saving turn…';
-        try {
-          await jsonRequest(`/api/v1/conversations/${encodeURIComponent(state.current.id)}/messages`, {method:'POST', headers:{'Content-Type':'application/json','X-Request-ID':`browser_${Date.now()}`}, body:JSON.stringify({content:prompt})});
-          $('#prompt').value = ''; await openConversation(state.current.id); $('#composer-status').textContent = 'Turn saved; event stream is replayable.';
-        } catch (error) { $('#composer-status').textContent = error.message; }
-        button.disabled = false;
-      });
-      loadStatus(); loadConversations().catch(error => { $('#messages').innerHTML = `<div class="empty error">${escapeHTML(error.message)}. Start FalkorDB, then reload.</div>`; });
-      setInterval(loadStatus, 15000);
+        function formatTime(value, fallback) {
+          if (!value) return fallback || "";
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) return fallback || String(value);
+          return new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"}).format(date);
+        }
+
+        function relativeTime(value) {
+          if (!value) return "";
+          const date = new Date(value);
+          if (Number.isNaN(date.getTime())) return "";
+          const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+          const absolute = Math.abs(seconds);
+          if (absolute < 60) return "just now";
+          const minutes = Math.round(seconds / 60);
+          if (Math.abs(minutes) < 60) return minutes < 0 ? Math.abs(minutes) + "m ago" : "in " + minutes + "m";
+          const hours = Math.round(minutes / 60);
+          if (Math.abs(hours) < 24) return hours < 0 ? Math.abs(hours) + "h ago" : "in " + hours + "h";
+          const days = Math.round(hours / 24);
+          return days < 0 ? Math.abs(days) + "d ago" : "in " + days + "d";
+        }
+
+        function safeURL(value) {
+          try {
+            const url = new URL(String(value), window.location.origin);
+            return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+          } catch (_) { return ""; }
+        }
+
+        function arrayValue(value) {
+          if (Array.isArray(value)) return value;
+          if (value === undefined || value === null || value === "") return [];
+          return [value];
+        }
+
+        async function apiRequest(url, options) {
+          const response = await fetch(url, Object.assign({headers: {Accept: "application/json"}}, options || {}));
+          let body = null;
+          const contentType = response.headers.get("content-type") || "";
+          try {
+            body = contentType.indexOf("json") >= 0 ? await response.json() : await response.text();
+          } catch (_) { body = null; }
+          if (!response.ok) {
+            const apiError = body && body.error;
+            const message = apiError && apiError.message ? apiError.message : (body && body.detail ? body.detail : (typeof body === "string" && body ? body : "Request failed (" + response.status + ")"));
+            const error = new Error(message);
+            error.status = response.status;
+            error.body = body;
+            throw error;
+          }
+          return body || {};
+        }
+
+        async function optionalRequest(url, options) {
+          try { return await apiRequest(url, options); }
+          catch (error) {
+            if (error.status === 404 || error.status === 405) return {__unavailable: true, status: error.status};
+            throw error;
+          }
+        }
+
+        function setConnection(label, kind) {
+          const badge = $("#connection-badge");
+          const dot = badge.querySelector(".status-dot");
+          const text = badge.querySelector("span:last-child");
+          badge.className = "connection-badge" + (kind ? " " + kind : "");
+          dot.className = "status-dot" + (kind === "ready" ? " ready" : kind === "error" ? " down" : "");
+          text.textContent = label;
+          $("#sidebar-status").textContent = label;
+          $("#sidebar-status-dot").className = "status-dot" + (kind === "ready" ? " ready" : kind === "error" ? " down" : "");
+        }
+
+        function showToast(message, kind) {
+          const toast = $("#toast");
+          toast.textContent = message;
+          toast.style.borderColor = kind === "error" ? "#6e313c" : "";
+          toast.classList.add("show");
+          window.clearTimeout(state.toastTimer);
+          state.toastTimer = window.setTimeout(() => toast.classList.remove("show"), 4200);
+        }
+
+        function createID(prefix) {
+          const random = window.crypto && window.crypto.getRandomValues ? window.crypto.getRandomValues(new Uint32Array(2)).join("") : String(Date.now()) + String(Math.random()).slice(2);
+          return prefix + "_" + random;
+        }
+
+        function setText(selector, value) {
+          const node = $(selector);
+          if (node) node.textContent = stringValue(value, "");
+        }
+
+        function renderConversationList() {
+          const list = $("#conversation-list");
+          const filter = $("#conversation-filter").value.trim().toLowerCase();
+          list.replaceChildren();
+          const items = state.conversations.filter((item) => !filter || stringValue(item.title).toLowerCase().indexOf(filter) >= 0);
+          $("#conversation-count").textContent = state.conversations.length ? String(state.conversations.length) : "0";
+          if (!state.conversations.length) {
+            const empty = makeNode("div", "empty-state");
+            appendText(empty, "strong", "", "No conversations yet");
+            appendText(empty, "p", "", "Create one or send a message to start a durable session.");
+            list.appendChild(empty);
+            return;
+          }
+          if (!items.length) {
+            const empty = makeNode("div", "empty-state");
+            appendText(empty, "strong", "", "No matching conversations");
+            appendText(empty, "p", "", "Try a different filter.");
+            list.appendChild(empty);
+            return;
+          }
+          items.forEach((item) => {
+            const button = makeNode("button", "conversation-item" + (state.currentId === item.id ? " active" : ""));
+            button.type = "button";
+            button.dataset.conversation = stringValue(item.id);
+            appendText(button, "span", "conversation-title", stringValue(item.title, "Untitled conversation"));
+            const meta = makeNode("span", "conversation-meta");
+            appendText(meta, "span", "", stringValue(item.status, "active"));
+            appendText(meta, "span", "", relativeTime(item.updated_at) || "recent");
+            button.appendChild(meta);
+            button.addEventListener("click", () => openConversation(item.id));
+            list.appendChild(button);
+          });
+        }
+
+        function setConversationHeader(conversation) {
+          const hasConversation = Boolean(conversation && conversation.id);
+          const title = hasConversation ? stringValue(conversation.title, "Untitled conversation") : "New conversation";
+          const detail = hasConversation ? stringValue(conversation.status, "active") + " · " + stringValue(conversation.id) : "Choose a conversation or start a new one.";
+          setText("#conversation-title", title);
+          setText("#conversation-detail", detail);
+          setText("#topbar-title", title);
+          setText("#topbar-detail", hasConversation ? "Durable chat stream · sequence " + state.lastEventId : "Durable chat stream");
+          $("#rename-conversation").disabled = !hasConversation;
+          $("#archive-conversation").disabled = !hasConversation || conversation.status === "archived";
+          $("#send").disabled = false;
+          $("#prompt").placeholder = hasConversation ? "Message NightShift…" : "Message NightShift to create a conversation…";
+        }
+
+        function messageRoleLabel(role) {
+          return ({user: "You", assistant: "NightShift", system: "System", tool: "Tool", progress: "Progress"})[role] || (role || "Message");
+        }
+
+        function renderCitationButton(citation, index) {
+          const button = makeNode("button", "citation-button");
+          button.type = "button";
+          button.title = stringValue(citation.url, "Source details");
+          button.textContent = "Source " + (index + 1) + (citation.source ? " · " + citation.source : "");
+          button.addEventListener("click", () => openSourceDrawer(citation));
+          return button;
+        }
+
+        function renderMessage(message, streaming) {
+          const rawRole = stringValue(message.role, "assistant");
+          const role = ["user", "assistant", "system", "tool", "progress"].indexOf(rawRole) >= 0 ? rawRole : "system";
+          const article = makeNode("article", "message " + role + (streaming ? " streaming" : ""));
+          article.dataset.messageId = stringValue(message.id);
+          const head = makeNode("div", "message-head");
+          appendText(head, "span", "message-role", messageRoleLabel(rawRole));
+          appendText(head, "span", "message-time", formatTime(message.created_at, ""));
+          article.appendChild(head);
+          const content = makeNode("div", "message-content", stringValue(message.content, ""));
+          if (streaming) content.appendChild(makeNode("span", "stream-cursor"));
+          article.appendChild(content);
+          const citations = arrayValue(message.citations).filter((item) => item && typeof item === "object");
+          if (citations.length) {
+            const footer = makeNode("div", "message-footer");
+            citations.slice(0, 20).forEach((citation, index) => footer.appendChild(renderCitationButton(citation, index)));
+            article.appendChild(footer);
+          }
+          appendPayloadCards(article, message);
+          return article;
+        }
+
+        function renderMessages() {
+          const container = $("#messages");
+          const shouldStick = container.scrollHeight - container.scrollTop - container.clientHeight < 140;
+          container.replaceChildren();
+          const visibleMessages = state.messages.slice();
+          Object.keys(state.streaming).forEach((turnID) => {
+            const draft = state.streaming[turnID];
+            if (!draft || !draft.content) return;
+            const hasMessage = visibleMessages.some((message) => message.turn_id === turnID && message.role === "assistant");
+            if (!hasMessage) visibleMessages.push({id: "stream-" + turnID, turn_id: turnID, role: "assistant", content: draft.content, created_at: draft.created_at});
+          });
+          if (!visibleMessages.length) {
+            const empty = makeNode("div", "empty-state");
+            appendText(empty, "strong", "", state.current ? "No messages in this conversation" : "Start with a question");
+            appendText(empty, "p", "", state.current ? "The stream is ready for your first message." : "Ask what changed, search the web, or describe a bounded task.");
+            container.appendChild(empty);
+          } else {
+            visibleMessages.forEach((message) => {
+              const draft = message.id && message.id.indexOf("stream-") === 0;
+              container.appendChild(renderMessage(message, draft));
+            });
+          }
+          setText("#message-count", String(state.messages.length));
+          if (shouldStick || !state.messages.length) container.scrollTop = container.scrollHeight;
+        }
+
+        function normalizeEventData(event) {
+          const data = event && event.data && typeof event.data === "object" ? event.data : {};
+          const parsed = Object.create(null);
+          Object.keys(data).forEach((key) => { parsed[key] = parseMaybeJSON(data[key]); });
+          return parsed;
+        }
+
+        function eventTitle(type, data) {
+          if (type === "turn.progress") return data.phase === "search" ? "Searching public sources" : "Turn in progress";
+          if (type.indexOf("tool.") === 0) return "Tool activity";
+          if (type.indexOf("agent.") === 0) return "Agent activity";
+          if (type.indexOf("task.") === 0) return "Task update";
+          if (type.indexOf("workspace.") === 0) return "Workspace artifact";
+          if (type.indexOf("approval.") === 0) return "Approval required";
+          if (type.indexOf("action.") === 0) return "Action update";
+          if (type.indexOf("report.") === 0) return "Report update";
+          return type.replace(/[._]/g, " ");
+        }
+
+        function findData(data, keys, fallback) {
+          for (let index = 0; index < keys.length; index += 1) {
+            const value = data[keys[index]];
+            if (value !== undefined && value !== null && value !== "") return value;
+          }
+          return fallback;
+        }
+
+        function appendKeyValue(parent, label, value) {
+          if (value === undefined || value === null || value === "") return;
+          const line = makeNode("p");
+          appendText(line, "strong", "card-label", label + " ");
+          line.appendChild(document.createTextNode(String(value)));
+          parent.appendChild(line);
+        }
+
+        function buildProgressCard(event) {
+          const data = normalizeEventData(event);
+          const card = makeNode("article", "operational-card progress-card");
+          const head = makeNode("div", "card-head");
+          appendText(head, "strong", "", eventTitle(event.type, data));
+          appendText(head, "span", "card-status", stringValue(findData(data, ["status", "phase"], event.type), "active"));
+          card.appendChild(head);
+          appendKeyValue(card, "Query", findData(data, ["query", "message", "detail"], ""));
+          const progress = numberValue(findData(data, ["progress", "percent"], -1), -1);
+           if (progress >= 0) {
+            const bar = makeNode("div", "bar");
+            const fill = makeNode("span");
+            fill.style.width = Math.max(0, Math.min(100, progress)) + "%";
+            bar.appendChild(fill);
+             card.appendChild(bar);
+           }
+           const taskID = stringValue(findData(data, ["task_id", "id"], ""));
+           if (taskID) {
+             const actions = makeNode("div", "card-actions");
+             const status = stringValue(findData(data, ["status", "state"], "pending"));
+             if (status === "failed" || status === "cancelled") { const retry = makeNode("button", "secondary-button", "Retry"); retry.type = "button"; retry.addEventListener("click", async () => { retry.disabled = true; try { await apiRequest("/api/v1/tasks/" + encodeURIComponent(taskID) + "/retry", {method: "POST", headers: {Accept: "application/json"}}); showToast("Task retry queued"); await loadMorning(); } catch (error) { showToast(errorMessage(error), "error"); retry.disabled = false; } }); actions.appendChild(retry); }
+             if (status !== "completed" && status !== "cancelled") { const cancel = makeNode("button", "quiet-button", "Cancel"); cancel.type = "button"; cancel.addEventListener("click", async () => { cancel.disabled = true; try { await apiRequest("/api/v1/tasks/" + encodeURIComponent(taskID) + "/cancel", {method: "POST", headers: {Accept: "application/json"}}); showToast("Task cancelled"); await loadMorning(); } catch (error) { showToast(errorMessage(error), "error"); cancel.disabled = false; } }); actions.appendChild(cancel); }
+             if (actions.childNodes.length) card.appendChild(actions);
+           }
+           return card;
+        }
+
+        function buildTaskCard(data, title) {
+          const card = makeNode("article", "operational-card task-card");
+          const head = makeNode("div", "card-head");
+          appendText(head, "strong", "", stringValue(findData(data, ["title", "task_title", "name"], title || "Task"), "Task"));
+          appendText(head, "span", "card-status", stringValue(findData(data, ["status", "state"], "pending"), "pending"));
+          card.appendChild(head);
+          appendKeyValue(card, "Agent", findData(data, ["agent", "agent_type", "owner"], ""));
+          appendKeyValue(card, "Task", findData(data, ["task_id", "id"], ""));
+          appendKeyValue(card, "Detail", findData(data, ["detail", "message", "summary"], ""));
+          const progress = numberValue(findData(data, ["progress", "percent"], -1), -1);
+          if (progress >= 0) {
+            const bar = makeNode("div", "bar");
+            const fill = makeNode("span"); fill.style.width = Math.max(0, Math.min(100, progress)) + "%"; bar.appendChild(fill); card.appendChild(bar);
+          }
+          return card;
+        }
+
+        function buildArtifactCard(data, kind) {
+          const isDiff = kind === "diff";
+          const card = makeNode("article", "operational-card " + (isDiff ? "diff-card" : "test-card"));
+          const head = makeNode("div", "card-head");
+          appendText(head, "strong", "", isDiff ? "Diff available" : "Test result");
+          appendText(head, "span", "card-status", stringValue(findData(data, ["status", "state", "result"], isDiff ? "review" : "unknown"), "unknown"));
+          card.appendChild(head);
+          appendKeyValue(card, "Workspace", findData(data, ["workspace", "workspace_id", "branch"], ""));
+          appendKeyValue(card, "Files", findData(data, ["files", "file_count"], ""));
+          const output = findData(data, isDiff ? ["diff", "patch", "content", "summary"] : ["output", "logs", "test_output", "summary"], "");
+          if (output) card.appendChild(makeNode("pre", "code-block", typeof output === "string" ? output : JSON.stringify(output, null, 2)));
+          return card;
+        }
+
+        function buildApprovalCard(data) {
+          const card = makeNode("article", "operational-card approval-card");
+          const head = makeNode("div", "card-head");
+          appendText(head, "strong", "", "Approval required");
+          appendText(head, "span", "card-status", stringValue(findData(data, ["status", "state"], "awaiting approval"), "awaiting approval"));
+          card.appendChild(head);
+          appendKeyValue(card, "Effect", findData(data, ["effect", "action", "summary"], "Review the proposed external action before approving."));
+          appendKeyValue(card, "Target", findData(data, ["target", "repository", "workspace"], ""));
+          appendKeyValue(card, "Provider", findData(data, ["provider", "agent"], ""));
+          const actionID = stringValue(findData(data, ["action_id", "id"], ""));
+          const actions = makeNode("div", "card-actions");
+          const approve = makeNode("button", ""); approve.type = "button"; approve.textContent = actionID ? "Approve action" : "Action ID unavailable"; approve.disabled = !actionID; approve.addEventListener("click", () => approveAction(actionID, approve)); actions.appendChild(approve);
+          card.appendChild(actions);
+          return card;
+        }
+
+        function appendPayloadCards(parent, item) {
+          if (!item || typeof item !== "object") return;
+          const sources = [];
+          ["task", "task_data", "artifact", "artifact_data", "approval", "approval_data", "diff", "test", "tests"].forEach((key) => {
+            if (item[key] !== undefined) sources.push({key: key, value: parseMaybeJSON(item[key])});
+          });
+          sources.forEach((source) => {
+            const value = source.value && typeof source.value === "object" ? source.value : {summary: source.value};
+            if (source.key.indexOf("approval") === 0) parent.appendChild(buildApprovalCard(value));
+            else if (source.key.indexOf("diff") === 0) parent.appendChild(buildArtifactCard(value, "diff"));
+            else if (source.key.indexOf("test") === 0) parent.appendChild(buildArtifactCard(value, "test"));
+            else if (source.key.indexOf("task") === 0) parent.appendChild(buildTaskCard(value, "Task"));
+            else if (source.key.indexOf("artifact") === 0 && (value.diff || value.patch)) parent.appendChild(buildArtifactCard(value, "diff"));
+          });
+        }
+
+        function renderActivity() {
+          const list = $("#activity-list");
+          list.replaceChildren();
+          const events = Array.from(state.events.values()).sort((left, right) => left.sequence - right.sequence).slice(-12);
+          events.forEach((event) => {
+            const data = normalizeEventData(event);
+            let card;
+            if (event.type.indexOf("task.") === 0 || event.type.indexOf("agent.") === 0) card = buildTaskCard(data, eventTitle(event.type, data));
+            else if (event.type === "workspace.diff_available") card = buildArtifactCard(data, "diff");
+            else if (event.type === "workspace.tests_started" || event.type === "workspace.tests_completed") card = buildArtifactCard(data, "test");
+            else if (event.type === "approval.required" || event.type === "agent.approval_required") card = buildApprovalCard(data);
+            else if (event.type.indexOf("turn.") === 0 || event.type.indexOf("tool.") === 0 || event.type.indexOf("report.") === 0 || event.type.indexOf("action.") === 0) card = buildProgressCard(event);
+            if (card) list.appendChild(card);
+          });
+          setText("#event-count", String(state.events.size || state.lastEventId || 0));
+        }
+
+        function updateStreamStatus(label, kind) {
+          const node = $("#stream-status");
+          node.textContent = label;
+          node.className = kind === "error" ? "error-text" : kind === "ready" ? "" : "subtle";
+        }
+
+        function closeEventStream() {
+          state.eventGeneration += 1;
+          window.clearTimeout(state.eventReconnectTimer);
+          window.clearTimeout(state.eventOpenTimer);
+          state.eventReconnectTimer = null;
+          state.eventOpenTimer = null;
+          window.clearInterval(state.messagePollTimer);
+          state.messagePollTimer = null;
+          if (state.eventSource) state.eventSource.close();
+          state.eventSource = null;
+          state.eventConnected = false;
+        }
+
+        function startMessagePolling() {
+          if (state.messagePollTimer || !state.currentId) return;
+          updateStreamStatus("Event stream unavailable · refreshing messages periodically", "error");
+          refreshConversation();
+          state.messagePollTimer = window.setInterval(refreshConversation, 8000);
+        }
+
+        function scheduleEventReconnect(generation) {
+          if (state.eventReconnectTimer || generation !== state.eventGeneration || !state.currentId) return;
+          state.eventReconnectTimer = window.setTimeout(() => {
+            state.eventReconnectTimer = null;
+            if (generation === state.eventGeneration && state.currentId) connectEventStream(true);
+          }, 1200);
+        }
+
+        function connectEventStream(manual) {
+          if (!state.currentId) return;
+          if (typeof window.EventSource !== "function") { startMessagePolling(); return; }
+          if (state.eventSource) state.eventSource.close();
+          const generation = state.eventGeneration;
+          let url = "/api/v1/conversations/" + encodeURIComponent(state.currentId) + "/events";
+          if (manual) url += "?after=" + encodeURIComponent(String(state.lastEventId));
+          const source = new EventSource(url);
+          state.eventSource = source;
+          updateStreamStatus("Connecting to the replayable event stream…");
+          state.eventOpenTimer = window.setTimeout(() => {
+            if (state.eventSource === source && !state.eventConnected) {
+              source.close();
+              state.eventSource = null;
+              startMessagePolling();
+            }
+          }, 8000);
+          source.onopen = () => {
+            if (state.eventSource !== source || generation !== state.eventGeneration) return;
+            window.clearTimeout(state.eventOpenTimer);
+            state.eventOpenTimer = null;
+            window.clearInterval(state.messagePollTimer);
+            state.messagePollTimer = null;
+            state.eventConnected = true;
+            updateStreamStatus("Connected · replay resumes after event " + state.lastEventId, "ready");
+          };
+          const receive = (event, eventType) => {
+            if (state.eventSource !== source || generation !== state.eventGeneration) return;
+            const sequence = Number(event.lastEventId || 0);
+            if (sequence && sequence <= state.lastEventId) return;
+            if (sequence) state.lastEventId = Math.max(state.lastEventId, sequence);
+            let payload = {};
+            try { payload = JSON.parse(event.data || "{}"); } catch (_) { payload = {data: event.data || ""}; }
+            const normalized = {id: stringValue(event.lastEventId, createID("event")), sequence: sequence || state.lastEventId, type: eventType || event.type || "message", data: payload.data || payload, created_at: payload.created_at || new Date().toISOString(), turn_id: payload.turn_id || "", task_id: payload.task_id || ""};
+            const key = normalized.sequence ? String(normalized.sequence) : normalized.id;
+            if (state.events.has(key)) return;
+            state.events.set(key, normalized);
+            applyLiveEvent(normalized);
+            renderActivity();
+            if (normalized.type === "message.created" || normalized.type === "assistant.completed" || normalized.type === "turn.completed" || normalized.type === "turn.failed" || normalized.type === "approval.approved" || normalized.type === "action.completed") queueConversationRefresh();
+          };
+          EVENT_TYPES.forEach((type) => source.addEventListener(type, (event) => receive(event, type)));
+          source.onmessage = (event) => receive(event, event.type || "message");
+          source.onerror = () => {
+            if (state.eventSource !== source || generation !== state.eventGeneration) return;
+            state.eventConnected = false;
+            updateStreamStatus("Stream interrupted · reconnecting from event " + state.lastEventId, "error");
+            // EventSource automatically reconnects with Last-Event-ID. If the
+            // browser reports a terminal CLOSED state, use the query cursor as
+            // a fallback for servers that only implement the documented query.
+            if (source.readyState === EventSource.CLOSED) scheduleEventReconnect(generation);
+          };
+        }
+
+        function applyLiveEvent(event) {
+          const data = normalizeEventData(event);
+          const turnID = stringValue(event.turn_id || data.turn_id, "");
+          if (event.type === "assistant.delta" && turnID) {
+            const delta = stringValue(findData(data, ["delta", "text", "content"], ""));
+            if (delta) {
+              const existing = state.streaming[turnID] || {content: "", created_at: event.created_at};
+              existing.content = data.content && String(data.content).length >= existing.content.length ? String(data.content) : existing.content + delta;
+              state.streaming[turnID] = existing;
+              renderMessages();
+            }
+          }
+          if (event.type === "assistant.completed" && turnID && data.content) {
+            state.streaming[turnID] = {content: String(data.content), created_at: event.created_at};
+            renderMessages();
+          }
+          if (event.type === "turn.failed" && turnID) {
+            state.streaming[turnID] = {content: stringValue(findData(data, ["error", "message", "detail"], "The turn failed.")), created_at: event.created_at};
+            renderMessages();
+          }
+          setText("#topbar-detail", "Durable chat stream · sequence " + state.lastEventId);
+        }
+
+        function queueConversationRefresh() {
+          if (!state.currentId) return;
+          if (state.refreshInFlight) { state.refreshQueued = true; return; }
+          window.clearTimeout(state.refreshTimer);
+          state.refreshTimer = window.setTimeout(() => refreshConversation(), 140);
+        }
+
+        async function refreshConversation() {
+          if (!state.currentId) return;
+          window.clearTimeout(state.refreshTimer);
+          state.refreshTimer = null;
+          if (state.refreshInFlight) { state.refreshQueued = true; return; }
+          const id = state.currentId;
+          state.refreshInFlight = true;
+          try {
+            const body = await apiRequest("/api/v1/conversations/" + encodeURIComponent(id));
+            if (id !== state.currentId) return;
+            state.current = body.conversation || state.current;
+            state.messages = Array.isArray(body.messages) ? body.messages : [];
+            const serverSequence = numberValue(state.current && state.current.event_sequence, 0);
+            state.lastEventId = Math.max(state.lastEventId, serverSequence);
+            Object.keys(state.streaming).forEach((turnID) => {
+              if (state.messages.some((message) => message.turn_id === turnID && message.role === "assistant")) delete state.streaming[turnID];
+            });
+            setConversationHeader(state.current);
+            renderConversationList();
+            renderMessages();
+          } catch (error) {
+            updateStreamStatus("Refresh failed: " + errorMessage(error), "error");
+          } finally {
+            state.refreshInFlight = false;
+            if (state.refreshQueued) { state.refreshQueued = false; queueConversationRefresh(); }
+          }
+        }
+
+        async function openConversation(id) {
+          if (!id) return;
+          const generation = ++state.conversationGeneration;
+          closeEventStream();
+          state.currentId = id;
+          state.current = null;
+          state.messages = [];
+          state.events = new Map();
+          state.streaming = Object.create(null);
+          state.lastEventId = 0;
+          setConversationHeader(null);
+          renderConversationList();
+          renderMessages();
+          updateStreamStatus("Loading conversation…");
+          try {
+            const body = await apiRequest("/api/v1/conversations/" + encodeURIComponent(id));
+            if (generation !== state.conversationGeneration) return;
+            state.current = body.conversation || null;
+            state.messages = Array.isArray(body.messages) ? body.messages : [];
+            state.lastEventId = numberValue(state.current && state.current.event_sequence, 0);
+            setConversationHeader(state.current);
+            renderConversationList();
+            renderMessages();
+            connectEventStream(false);
+          } catch (error) {
+            setConversationHeader(null);
+            updateStreamStatus("Conversation unavailable: " + errorMessage(error), "error");
+            const container = $("#messages"); container.replaceChildren();
+            const empty = makeNode("div", "error-state"); appendText(empty, "strong", "", "Could not open conversation"); appendText(empty, "p", "", errorMessage(error)); container.appendChild(empty);
+          }
+        }
+
+        async function loadConversations() {
+          try {
+            const conversations = []; let cursor = "";
+            for (let page = 0; page < 10; page += 1) {
+              const body = await apiRequest("/api/v1/conversations?limit=50" + (cursor ? "&after=" + encodeURIComponent(cursor) : ""));
+              if (Array.isArray(body.conversations)) conversations.push.apply(conversations, body.conversations);
+              if (!body.next_cursor || !Array.isArray(body.conversations) || !body.conversations.length) break;
+              cursor = String(body.next_cursor);
+            }
+            state.conversations = conversations;
+            renderConversationList();
+            if (state.conversations.length && !state.currentId) await openConversation(state.conversations[0].id);
+            else if (!state.conversations.length) { setConversationHeader(null); renderMessages(); }
+          } catch (error) {
+            state.conversations = [];
+            renderConversationList();
+            const list = $("#conversation-list"); list.replaceChildren();
+            const failure = makeNode("div", "error-state"); appendText(failure, "strong", "", "Conversations unavailable"); appendText(failure, "p", "", errorMessage(error) + " Use Health to inspect the service, then retry."); const retry = makeNode("button", "secondary-button", "Retry"); retry.type = "button"; retry.style.marginTop = ".65rem"; retry.addEventListener("click", loadConversations); failure.appendChild(retry); list.appendChild(failure);
+            setConnection("Service unavailable", "error");
+          }
+        }
+
+        async function createConversation(title, closeModal) {
+          const cleanTitle = stringValue(title).trim() || "New conversation";
+          const button = $("#save-modal");
+          if (button) button.disabled = true;
+          try {
+            const body = await apiRequest("/api/v1/conversations", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json", "X-Request-ID": createID("browser")}, body: JSON.stringify({title: cleanTitle})});
+            const conversation = body.conversation || body;
+            if (conversation && conversation.id) {
+              state.conversations = [conversation].concat(state.conversations.filter((item) => item.id !== conversation.id));
+              if (closeModal) closeConversationModal();
+              renderConversationList();
+              await openConversation(conversation.id);
+              showToast("Conversation created");
+              return conversation;
+            }
+            throw new Error("The server did not return a conversation ID.");
+          } catch (error) {
+            if (closeModal) $("#modal-error").textContent = errorMessage(error);
+            else showToast(errorMessage(error), "error");
+            throw error;
+          } finally {
+            if (button) button.disabled = false;
+          }
+        }
+
+        async function sendMessage(event) {
+          event.preventDefault();
+          const prompt = $("#prompt").value.trim();
+          if (!prompt) { $("#prompt").focus(); return; }
+          const send = $("#send");
+          send.disabled = true;
+          setText("#composer-status", "Saving turn…");
+          try {
+            if (!state.currentId) await createConversation(prompt.slice(0, 56), false);
+            const conversationID = state.currentId;
+            const requestID = createID("browser");
+            const messageID = createID("message");
+            const body = await apiRequest("/api/v1/conversations/" + encodeURIComponent(conversationID) + "/messages", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json", "X-Request-ID": requestID}, body: JSON.stringify({id: messageID, content: prompt})});
+            [body.user_message, body.assistant_message].filter(Boolean).forEach((message) => {
+              if (!state.messages.some((item) => item.id === message.id)) state.messages.push(message);
+            });
+            $("#prompt").value = "";
+            renderMessages();
+            await refreshConversation();
+            setText("#composer-status", "Turn saved; the event stream will replay missed updates.");
+          } catch (error) {
+            setText("#composer-status", errorMessage(error));
+            showToast(errorMessage(error), "error");
+          } finally {
+            send.disabled = false;
+          }
+        }
+
+        function openConversationModal(mode) {
+          state.modalMode = mode || "new";
+          $("#conversation-modal-backdrop").classList.add("open");
+          $("#conversation-modal-backdrop").setAttribute("aria-hidden", "false");
+          $("#modal-title").textContent = state.modalMode === "rename" ? "Rename conversation" : "New conversation";
+          $("#modal-description").textContent = state.modalMode === "rename" ? "Use a name that makes this durable session easy to find." : "Give this conversation a short name. You can change it later.";
+          $("#save-modal").textContent = state.modalMode === "rename" ? "Save" : "Create";
+          $("#conversation-name").value = state.modalMode === "rename" && state.current ? state.current.title : "";
+          $("#modal-error").textContent = "";
+          window.setTimeout(() => $("#conversation-name").focus(), 30);
+        }
+
+        function closeConversationModal() {
+          $("#conversation-modal-backdrop").classList.remove("open");
+          $("#conversation-modal-backdrop").setAttribute("aria-hidden", "true");
+        }
+
+        async function submitConversationModal(event) {
+          event.preventDefault();
+          const title = $("#conversation-name").value.trim();
+          if (!title) { $("#modal-error").textContent = "A conversation name is required."; return; }
+          if (state.modalMode === "new") { await createConversation(title, true); return; }
+          if (!state.currentId) return;
+          $("#save-modal").disabled = true;
+          try {
+            const updated = await apiRequest("/api/v1/conversations/" + encodeURIComponent(state.currentId), {method: "PATCH", headers: {"Content-Type": "application/json", Accept: "application/json"}, body: JSON.stringify({title: title})});
+            state.current = updated;
+            state.conversations = state.conversations.map((item) => item.id === updated.id ? updated : item);
+            renderConversationList(); setConversationHeader(updated); closeConversationModal(); showToast("Conversation renamed");
+          } catch (error) { $("#modal-error").textContent = errorMessage(error); }
+          finally { $("#save-modal").disabled = false; }
+        }
+
+        async function archiveConversation() {
+          if (!state.currentId || !window.confirm("Archive this conversation?")) return;
+          const button = $("#archive-conversation"); button.disabled = true;
+          try {
+            const updated = await apiRequest("/api/v1/conversations/" + encodeURIComponent(state.currentId), {method: "PATCH", headers: {"Content-Type": "application/json", Accept: "application/json"}, body: JSON.stringify({status: "archived"})});
+            state.current = updated; state.conversations = state.conversations.map((item) => item.id === updated.id ? updated : item); renderConversationList(); setConversationHeader(updated); showToast("Conversation archived");
+          } catch (error) { showToast(errorMessage(error), "error"); button.disabled = false; }
+        }
+
+        function openDrawer(title, subtitle, nodes) {
+          $("#drawer-title").textContent = title || "Details";
+          $("#drawer-subtitle").textContent = subtitle || "";
+          const body = $("#drawer-body"); body.replaceChildren();
+          arrayValue(nodes).forEach((node) => { if (node) body.appendChild(node); });
+          $("#details-drawer").classList.add("open"); $("#drawer-backdrop").classList.add("open"); $("#details-drawer").setAttribute("aria-hidden", "false");
+        }
+
+        function closeDrawer() {
+          $("#details-drawer").classList.remove("open"); $("#drawer-backdrop").classList.remove("open"); $("#details-drawer").setAttribute("aria-hidden", "true");
+        }
+
+        function openSourceDrawer(citation) {
+          const section = makeNode("section", "detail-section");
+          appendText(section, "h3", "", "Source");
+          appendText(section, "p", "", stringValue(citation.title, "Untitled source"));
+          if (citation.source) appendText(section, "p", "faint", citation.source);
+          const url = safeURL(citation.url);
+          if (url) { const link = makeNode("a", "detail-link", url); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; section.appendChild(link); }
+          const excerpt = makeNode("section", "detail-section"); appendText(excerpt, "h3", "", "Excerpt"); appendText(excerpt, "p", "", stringValue(citation.excerpt, "No bounded excerpt was returned."));
+          openDrawer("Source details", citation.source || "Cited evidence", [section, excerpt]);
+        }
+
+        function pathNodesFrom(value) {
+          const path = value && value.path !== undefined ? value.path : value;
+          if (Array.isArray(path)) return path.map((node) => typeof node === "string" ? {label: "Path", name: node} : node);
+          if (value && Array.isArray(value.nodes)) return value.nodes;
+          return [];
+        }
+
+        function renderPathSection(payload) {
+          const section = makeNode("section", "detail-section");
+          appendText(section, "h3", "", "FalkorDB path");
+          const nodes = pathNodesFrom(payload);
+          if (!nodes.length) { appendText(section, "p", "", stringValue(payload && payload.why, "No graph path was returned.")); return section; }
+          const list = makeNode("div", "path-list");
+          nodes.forEach((node, index) => {
+            if (index) appendText(list, "div", "path-arrow", "↓");
+            const row = makeNode("div", "path-node");
+            appendText(row, "span", "path-node-label", stringValue(node.label || node.type, "Node"));
+            const value = makeNode("span", "path-node-name", stringValue(node.name || node.id || node.detail, "Unknown node"));
+            let valueNode = value;
+            const url = safeURL(node.url);
+            if (url) { const link = makeNode("a", "detail-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = value.textContent; valueNode = link; }
+            row.appendChild(valueNode);
+            list.appendChild(row);
+          });
+          section.appendChild(list);
+          return section;
+        }
+
+        async function openGraphPath(recommendation, fallback) {
+          const loading = makeNode("p", "subtle", "Loading graph evidence…");
+          openDrawer("Graph path", "FalkorDB relationship explanation", [loading]);
+          try {
+            const payload = recommendation && recommendation.id ? await apiRequest("/api/v1/graph/path/" + encodeURIComponent(recommendation.id)) : fallback;
+            const sections = [renderPathSection(payload)];
+            if (payload && payload.why) { const why = makeNode("section", "detail-section"); appendText(why, "h3", "", "Why it matters"); appendText(why, "p", "", payload.why); sections.push(why); }
+            openDrawer("Graph path", "FalkorDB relationship explanation", sections);
+          } catch (error) {
+            const message = makeNode("section", "error-state"); appendText(message, "strong", "", "Graph path unavailable"); appendText(message, "p", "", errorMessage(error));
+            if (fallback) message.appendChild(renderPathSection(fallback));
+            openDrawer("Graph path", "FalkorDB relationship explanation", [message]);
+          }
+        }
+
+        async function approveAction(actionID, button) {
+          if (!actionID) return;
+          button.disabled = true;
+          try { await apiRequest("/api/v1/actions/" + encodeURIComponent(actionID) + "/approve", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json"}, body: JSON.stringify({note: "Approved from NightShift web UI"})}); showToast("Action approved"); button.textContent = "Approved"; }
+          catch (error) { button.disabled = false; showToast(errorMessage(error), "error"); }
+        }
+
+        function renderDashboardMetrics(dashboard, recommendations) {
+          const metrics = makeNode("div", "metric-grid");
+          const project = dashboard && dashboard.project ? dashboard.project : {};
+          [["Project", project.name || "Not configured"], ["Graph path", dashboard && dashboard.graph_path && dashboard.graph_path.length ? dashboard.graph_path.length + " nodes" : "No path"], ["Tasks", dashboard && Array.isArray(dashboard.tasks) ? dashboard.tasks.length : "—"], ["Recommendations", recommendations.length || 0]].forEach((pair) => { const metric = makeNode("div", "metric"); appendText(metric, "div", "metric-label", pair[0]); appendText(metric, "div", "metric-value", pair[1]); metrics.appendChild(metric); });
+          return metrics;
+        }
+
+        function recommendationCard(recommendation) {
+          const card = makeNode("article", "recommendation-card");
+          const top = makeNode("div", "recommendation-top");
+          const heading = makeNode("div"); appendText(heading, "h3", "", stringValue(recommendation.title, "Recommendation")); top.appendChild(heading);
+          appendText(top, "span", "score", Number.isFinite(Number(recommendation.score)) ? "Score " + Number(recommendation.score).toFixed(1) : "Ranked"); card.appendChild(top);
+          appendText(card, "p", "", stringValue(recommendation.summary, "No summary was returned."));
+          if (recommendation.why) appendText(card, "p", "", "Why: " + recommendation.why);
+          const meta = makeNode("div", "recommendation-meta"); appendText(meta, "span", "", stringValue(recommendation.evidence && recommendation.evidence.source_id, "Graph evidence")); appendText(meta, "span", "", formatTime(recommendation.created_at, "")); card.appendChild(meta);
+          if (recommendation.path_readable) appendText(card, "div", "path-preview", recommendation.path_readable);
+          const actions = makeNode("div", "recommendation-actions");
+          const path = makeNode("button", "secondary-button", "View graph path"); path.type = "button"; path.addEventListener("click", () => openGraphPath(recommendation, recommendation.path)); actions.appendChild(path);
+          if (recommendation.evidence && recommendation.evidence.url) { const source = makeNode("button", "secondary-button", "Source details"); source.type = "button"; source.addEventListener("click", () => openSourceDrawer({url: recommendation.evidence.url, title: recommendation.title, source: recommendation.evidence.source_id, excerpt: recommendation.evidence.excerpt})); actions.appendChild(source); }
+          const useful = makeNode("button", "quiet-button", "Useful"); useful.type = "button"; useful.addEventListener("click", () => sendFeedback(recommendation.id, "useful", useful)); actions.appendChild(useful);
+          const plan = makeNode("button", "primary-button", "Propose plan"); plan.type = "button"; plan.addEventListener("click", () => proposePlan(recommendation, plan)); actions.appendChild(plan);
+          card.appendChild(actions);
+          return card;
+        }
+
+        async function sendFeedback(id, kind, button) {
+          if (!id) return;
+          button.disabled = true;
+          try { await apiRequest("/api/v1/recommendations/" + encodeURIComponent(id) + "/feedback", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json"}, body: JSON.stringify({kind: kind})}); button.textContent = "Saved"; showToast("Feedback saved"); }
+          catch (error) { button.disabled = false; showToast(errorMessage(error), "error"); }
+        }
+
+        async function proposePlan(recommendation, button) {
+          if (!recommendation.id) return;
+          button.disabled = true;
+          try { const result = await apiRequest("/api/v1/recommendations/" + encodeURIComponent(recommendation.id) + "/plan", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json"}, body: JSON.stringify({goal: "Prepare a bounded implementation plan from this evidence."})}); button.textContent = "Plan proposed"; showPlanDrawer(result); }
+          catch (error) { button.disabled = false; showToast(errorMessage(error), "error"); }
+        }
+
+        function showPlanDrawer(result) {
+          const section = makeNode("section", "detail-section"); appendText(section, "h3", "", "Plan proposal"); appendText(section, "p", "", stringValue(result.summary, "The server returned a plan proposal."));
+          const steps = arrayValue(result.steps); if (steps.length) { const list = makeNode("div", "path-list"); steps.forEach((step, index) => { const item = makeNode("div", "path-node"); appendText(item, "span", "path-node-label", "Step " + (index + 1)); appendText(item, "span", "path-node-name", typeof step === "string" ? step : stringValue(step.description, "Unlabeled step")); list.appendChild(item); }); section.appendChild(list); }
+          const action = makeNode("section", "detail-section"); appendText(action, "h3", "", "Approval"); appendText(action, "p", "", result.action_id ? "An action ID was returned. Approval remains explicit." : "No action ID was returned by this proposal.");
+          openDrawer("Plan proposal", stringValue(result.id, "Planner response"), [section, action]);
+        }
+
+        async function loadMorning() {
+          const content = $("#morning-content"); content.replaceChildren(); const loading = makeNode("div", "empty-state"); appendText(loading, "strong", "", "Loading morning context"); appendText(loading, "p", "", "Reading dashboard and recommendations…"); content.appendChild(loading);
+          const results = await Promise.allSettled([apiRequest("/api/v1/dashboard"), apiRequest("/api/v1/recommendations?limit=10"), apiRequest("/api/v1/briefings?include_items=1&limit=1")]);
+          const dashboardResult = results[0], recommendationsResult = results[1], briefingResult = results[2];
+          state.dashboard = dashboardResult.status === "fulfilled" ? dashboardResult.value : null;
+          state.recommendations = recommendationsResult.status === "fulfilled" && Array.isArray(recommendationsResult.value.recommendations) ? recommendationsResult.value.recommendations : [];
+          content.replaceChildren();
+          if (!state.dashboard && recommendationsResult.status === "rejected" && briefingResult.status === "rejected") { const failure = makeNode("div", "error-state"); appendText(failure, "strong", "", "Morning context unavailable"); appendText(failure, "p", "", errorMessage(dashboardResult.reason || recommendationsResult.reason || briefingResult.reason)); const retry = makeNode("button", "secondary-button", "Retry"); retry.type = "button"; retry.style.marginTop = ".7rem"; retry.addEventListener("click", loadMorning); failure.appendChild(retry); content.appendChild(failure); return; }
+          if (briefingResult.status === "fulfilled" && Array.isArray(briefingResult.value.briefings) && briefingResult.value.briefings.length) {
+            const report = briefingResult.value.briefings[0]; const reportCard = makeNode("section", "panel-card"); appendText(reportCard, "h3", "", "Latest daily report · " + stringValue(report.date, "unknown date")); appendText(reportCard, "p", "", stringValue(report.timezone, "UTC") + " · " + arrayValue(report.items).length + " inbox items · " + arrayValue(report.provider_failures).length + " provider warnings"); if (arrayValue(report.provider_failures).length) { const warnings = makeNode("div", "notice"); warnings.textContent = arrayValue(report.provider_failures).map((item) => stringValue(item.provider, "provider") + ": " + stringValue(item.reason, "unavailable")).join(" · "); reportCard.appendChild(warnings); } content.appendChild(reportCard);
+          }
+          content.appendChild(renderDashboardMetrics(state.dashboard, state.recommendations));
+          if (state.dashboard && Array.isArray(state.dashboard.graph_path) && state.dashboard.graph_path.length) { const graphCard = makeNode("section", "panel-card"); appendText(graphCard, "h3", "", "Active graph path"); appendText(graphCard, "p", "", state.dashboard.graph_path.map((node) => stringValue(node.name, node.id)).join(" → ")); const viewPath = makeNode("button", "secondary-button", "Open path drawer"); viewPath.type = "button"; viewPath.style.marginTop = ".65rem"; viewPath.addEventListener("click", () => openGraphPath(null, {nodes: state.dashboard.graph_path})); graphCard.appendChild(viewPath); content.appendChild(graphCard); }
+          const taskCard = makeNode("section", "panel-card"); appendText(taskCard, "h3", "", "Persisted work"); const tasks = state.dashboard && Array.isArray(state.dashboard.tasks) ? state.dashboard.tasks : []; if (!tasks.length) appendText(taskCard, "p", "", "No task records were returned by the dashboard."); else { const taskList = makeNode("div", "task-list"); tasks.forEach((task) => taskList.appendChild(buildTaskCard(task, "Task"))); taskCard.appendChild(taskList); } content.appendChild(taskCard);
+          const recommendations = makeNode("section", "panel-card"); appendText(recommendations, "h3", "", "Recommendations"); if (!state.recommendations.length) appendText(recommendations, "p", "", recommendationsResult.status === "rejected" ? "Recommendations are unavailable: " + errorMessage(recommendationsResult.reason) : "No recommendations are available yet. Run collection when sources are configured."); else state.recommendations.forEach((item) => recommendations.appendChild(recommendationCard(item))); content.appendChild(recommendations);
+          state.panelLoaded.morning = true;
+        }
+
+        function panelUnavailable(container, name, detail) {
+          container.replaceChildren(); const box = makeNode("div", "unavailable-state"); appendText(box, "strong", "", name + " is unavailable"); appendText(box, "p", "", detail || "This server did not expose the requested endpoint. Nothing was changed."); container.appendChild(box);
+        }
+
+        function renderGenericItems(container, body, keys, emptyText) {
+          let items = Array.isArray(body) ? body : [];
+          keys.some((key) => { if (Array.isArray(body && body[key])) { items = body[key]; return true; } return false; });
+          container.replaceChildren();
+          if (!items.length) { const empty = makeNode("div", "empty-state"); appendText(empty, "strong", "", "Nothing here yet"); appendText(empty, "p", "", emptyText); container.appendChild(empty); return; }
+           items.forEach((item) => { const card = makeNode("article", "panel-card"); appendText(card, "h3", "", stringValue(item.title || item.subject || item.name || item.summary, "Item")); appendText(card, "p", "", stringValue(item.summary || item.description || item.detail || item.status, "No bounded detail was returned.")); const url = safeURL(item.url || item.link); if (url) { const link = makeNode("a", "result-url", url); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; card.appendChild(link); } container.appendChild(card); });
+        }
+
+        function renderInboxItems(container, body) {
+          const items = body && Array.isArray(body.items) ? body.items : [];
+          container.replaceChildren();
+          if (!items.length) { const empty = makeNode("div", "empty-state"); appendText(empty, "strong", "", "Inbox is clear"); appendText(empty, "p", "", "No active reports, tasks, reminders, or approvals are waiting."); container.appendChild(empty); return; }
+          items.forEach((item) => {
+            const card = makeNode("article", "panel-card"); appendText(card, "h3", "", stringValue(item.title, "Inbox item")); appendText(card, "p", "", stringValue(item.summary, "No bounded detail was returned.")); appendText(card, "div", "recommendation-meta", stringValue(item.state, "unread") + " · " + stringValue(item.provider, "NightShift"));
+            const actions = makeNode("div", "button-row");
+            if (item.state !== "read" && item.state !== "archived") { const read = makeNode("button", "secondary-button", "Mark read"); read.type = "button"; read.addEventListener("click", async () => { read.disabled = true; try { await apiRequest("/api/v1/inbox/" + encodeURIComponent(item.id) + "/read", {method: "POST", headers: {Accept: "application/json"}}); await loadOptionalPanel("inbox"); } catch (error) { showToast(errorMessage(error), "error"); read.disabled = false; } }); actions.appendChild(read); }
+            if (item.state !== "archived") { const archive = makeNode("button", "quiet-button", "Archive"); archive.type = "button"; archive.addEventListener("click", async () => { archive.disabled = true; try { await apiRequest("/api/v1/inbox/" + encodeURIComponent(item.id) + "/archive", {method: "POST", headers: {Accept: "application/json"}}); await loadOptionalPanel("inbox"); } catch (error) { showToast(errorMessage(error), "error"); archive.disabled = false; } }); actions.appendChild(archive); }
+            card.appendChild(actions); container.appendChild(card);
+          });
+        }
+
+        async function loadOptionalPanel(view) {
+          const config = {inbox: {url: "/api/v1/inbox?limit=50", target: "#inbox-content", name: "Inbox"}, calendar: {url: "/api/v1/calendar?range=today", target: "#calendar-content", name: "Calendar"}, reminders: {url: "/api/v1/reminders?limit=50", target: "#reminders-content", name: "Reminders"}}[view];
+          if (!config) return;
+          const container = $(config.target); container.replaceChildren(); const loading = makeNode("div", "empty-state"); appendText(loading, "strong", "", "Loading " + config.name.toLowerCase()); appendText(loading, "p", "", "Checking the optional endpoint…"); container.appendChild(loading);
+           try { const body = await optionalRequest(config.url); if (body && body.__unavailable) { panelUnavailable(container, config.name, "The current server did not expose " + config.url.split("?")[0] + "."); return; } if (view === "inbox") renderInboxItems(container, body); else renderGenericItems(container, body, ["items", "inbox", "events", "reminders", "entries"], "No records were returned."); state.panelLoaded[view] = true; }
+          catch (error) { const failure = makeNode("div", "error-state"); appendText(failure, "strong", "", config.name + " could not be loaded"); appendText(failure, "p", "", errorMessage(error)); container.replaceChildren(failure); }
+        }
+
+        async function runSearch(event) {
+          event.preventDefault(); const query = $("#search-query").value.trim(); if (!query) { $("#search-query").focus(); return; }
+          const container = $("#search-content"); const loading = makeNode("div", "empty-state"); appendText(loading, "strong", "", "Searching…"); appendText(loading, "p", "", "Waiting for the configured public-source provider."); container.replaceChildren(loading);
+          try {
+            const body = await apiRequest("/api/v1/search?q=" + encodeURIComponent(query) + "&limit=10"); container.replaceChildren(); const results = Array.isArray(body.results) ? body.results : [];
+            if (!results.length) { const empty = makeNode("div", "empty-state"); appendText(empty, "strong", "", "No results"); appendText(empty, "p", "", "The provider returned no results for “" + query + "”."); container.appendChild(empty); return; }
+            results.forEach((result) => { const card = makeNode("article", "search-result"); appendText(card, "h3", "", stringValue(result.title, "Untitled result")); appendText(card, "p", "", stringValue(result.snippet, "No snippet was returned.")); const url = safeURL(result.url); if (url) { const link = makeNode("a", "result-url", url); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; card.appendChild(link); } const meta = makeNode("div", "recommendation-meta"); appendText(meta, "span", "", stringValue(result.source, "Unattributed source")); appendText(meta, "span", "", stringValue(result.category, "")); card.appendChild(meta); container.appendChild(card); });
+          } catch (error) { const failure = makeNode("div", "error-state"); appendText(failure, "strong", "", "Search unavailable"); appendText(failure, "p", "", errorMessage(error) + " The chat stream remains available."); container.replaceChildren(failure); }
+        }
+
+        function healthCard(title, value, status, detail) {
+          const card = makeNode("article", "health-card " + status); appendText(card, "h3", "", title); appendText(card, "div", "health-value", value); if (detail) appendText(card, "p", "", detail); return card;
+        }
+
+        async function loadHealth() {
+          const content = $("#health-content"); const loading = makeNode("div", "empty-state"); appendText(loading, "strong", "", "Checking health"); appendText(loading, "p", "", "Reading liveness, readiness, and runtime state…"); content.replaceChildren(loading);
+          const results = await Promise.allSettled([apiRequest("/health/live"), apiRequest("/health/ready"), apiRequest("/api/v1/status")]);
+          content.replaceChildren(); const grid = makeNode("div", "health-grid");
+          const live = results[0], ready = results[1], status = results[2];
+          grid.appendChild(healthCard("Liveness", live.status === "fulfilled" ? stringValue(live.value.status, "ok") : errorMessage(live.reason), live.status === "fulfilled" ? "ok" : "bad"));
+          grid.appendChild(healthCard("Readiness", ready.status === "fulfilled" ? stringValue(ready.value.status, "ready") : (ready.reason && ready.reason.status === 503 ? "not ready" : errorMessage(ready.reason)), ready.status === "fulfilled" ? "ok" : (ready.reason && ready.reason.status === 503 ? "pending" : "bad"), ready.status === "rejected" && ready.reason && ready.reason.body && ready.reason.body.initialization ? "Initialization: " + ready.reason.body.initialization : ""));
+          const statusBody = status.status === "fulfilled" ? status.value : null; const graph = statusBody && statusBody.graph ? statusBody.graph : null;
+          grid.appendChild(healthCard("Graph", graph ? (graph.available ? "connected" : "unavailable") : (status.status === "fulfilled" ? "unknown" : errorMessage(status.reason)), graph && graph.available ? "ok" : "bad", graph && graph.error ? graph.error : ""));
+          grid.appendChild(healthCard("Initialization", statusBody ? stringValue(statusBody.initialization, "unknown") : "unavailable", statusBody && statusBody.initialization === "ready" ? "ok" : "pending", statusBody && statusBody.initialization_error ? statusBody.initialization_error : ""));
+          grid.appendChild(healthCard("Scheduler", statusBody && statusBody.scheduler ? (statusBody.scheduler.paused ? "paused" : statusBody.scheduler.running ? "running" : "idle") : "unavailable", statusBody ? "ok" : "bad", statusBody && statusBody.scheduler && statusBody.scheduler.last_run_error ? statusBody.scheduler.last_run_error : ""));
+          grid.appendChild(healthCard("Runtime", statusBody ? stringValue(statusBody.version, "unknown") : "unavailable", statusBody ? "ok" : "bad", statusBody ? stringValue(statusBody.architecture, "") + " · uptime " + stringValue(statusBody.uptime, "unknown") : ""));
+          content.appendChild(grid); state.panelLoaded.health = true;
+        }
+
+        async function loadStatus() {
+          try {
+            const body = await apiRequest("/api/v1/status"); state.status = body; const graph = body.graph || {}; const ready = body.initialization === "ready" && graph.available;
+            setConnection(ready ? "Graph connected" : graph.available ? "Service initializing" : "Graph unavailable", ready ? "ready" : graph.available ? "warn" : "error");
+            setText("#graph-context", graph.available ? stringValue(graph.node_count, "0") + " graph nodes · " + stringValue(graph.relationship_count, "0") + " relationships" : "FalkorDB is unavailable. Chat and health errors will remain visible.");
+          } catch (error) { setConnection("Service unavailable", "error"); setText("#graph-context", errorMessage(error)); }
+        }
+
+        async function runCollection() {
+          const button = $("#run-collection"); button.disabled = true; button.textContent = "Starting…";
+          try { await apiRequest("/api/v1/runs", {method: "POST", headers: {Accept: "application/json", "X-Request-ID": createID("browser")}}); showToast("Collection run requested"); await loadMorning(); }
+          catch (error) { showToast(errorMessage(error), "error"); }
+          finally { button.disabled = false; button.textContent = "Run collection"; }
+        }
+
+        async function runBriefing() {
+          const button = $("#run-briefing"); button.disabled = true; button.textContent = "Preparing…";
+          try { await apiRequest("/api/v1/briefings/run", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json", "X-Request-ID": createID("briefing")}, body: JSON.stringify({timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"})}); showToast("Daily briefing saved"); await loadMorning(); await loadOptionalPanel("inbox"); }
+          catch (error) { showToast(errorMessage(error), "error"); }
+          finally { button.disabled = false; button.textContent = "Run briefing"; }
+        }
+
+        function setView(view) {
+          state.activeView = view;
+          $$(".view-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
+          $$("[data-view-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.viewPanel === view));
+          if (view === "morning") loadMorning();
+          else if (view === "health") loadHealth();
+          else if (view === "inbox" || view === "calendar" || view === "reminders") loadOptionalPanel(view);
+        }
+
+        function bindUI() {
+          $("#new-conversation").addEventListener("click", () => openConversationModal("new"));
+          $("#rename-conversation").addEventListener("click", () => openConversationModal("rename"));
+          $("#archive-conversation").addEventListener("click", archiveConversation);
+          $("#composer").addEventListener("submit", sendMessage);
+          $("#conversation-filter").addEventListener("input", renderConversationList);
+          $("#conversation-modal").addEventListener("submit", submitConversationModal);
+          $("#cancel-modal").addEventListener("click", closeConversationModal);
+          $("#conversation-modal-backdrop").addEventListener("click", (event) => { if (event.target === event.currentTarget) closeConversationModal(); });
+          $("#close-drawer").addEventListener("click", closeDrawer); $("#drawer-backdrop").addEventListener("click", closeDrawer);
+          $("#mobile-menu").addEventListener("click", () => { const sidebar = $("#sidebar"); const open = sidebar.classList.toggle("open"); $("#mobile-menu").setAttribute("aria-expanded", String(open)); });
+          $("#open-morning").addEventListener("click", () => setView("morning"));
+          $("#run-collection").addEventListener("click", runCollection);
+          $("#run-briefing").addEventListener("click", runBriefing);
+          $("#search-form").addEventListener("submit", runSearch);
+          $$(".view-tab").forEach((tab) => tab.addEventListener("click", () => { setView(tab.dataset.view); $("#sidebar").classList.remove("open"); $("#mobile-menu").setAttribute("aria-expanded", "false"); }));
+          $$("[data-refresh-panel]").forEach((button) => button.addEventListener("click", () => { const view = button.dataset.refreshPanel; if (view === "morning") loadMorning(); else if (view === "health") loadHealth(); else loadOptionalPanel(view); }));
+          document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDrawer(); closeConversationModal(); } });
+        }
+
+        bindUI();
+        loadStatus();
+        loadConversations();
+        window.setInterval(loadStatus, 30000);
+      }());
     </script>
   </body>
 </html>

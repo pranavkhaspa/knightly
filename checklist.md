@@ -48,10 +48,10 @@ Status: implementation plan committed before product changes
       timestamps.
 - [x] Add ordered `Message` records with role, bounded content, citations, and
       tool/task references.
-- [ ] Add `Turn` records with idempotency key, status, and terminal result.
+- [x] Add `Turn` records with idempotency key, status, and terminal result.
 - [x] Add ordered `Event` records with a per-stream sequence number.
 - [ ] Add `Run`/`AgentRun` records with provider and provider-session metadata.
-- [ ] Extend tasks with phase, progress, retry, lease, conversation, turn, provider,
+- [x] Extend tasks with phase, progress, retry, lease, conversation, turn, provider,
       and provider-session fields.
 - [ ] Add bounded `Artifact` records for diffs, test results, reports, and links.
 - [ ] Add `Briefing` and `InboxItem` records with read/archive state.
@@ -139,20 +139,20 @@ and bounded data.
 - [x] `PATCH /api/v1/conversations/{id}`
 - [x] `GET /api/v1/conversations/{id}/messages`
 - [x] `POST /api/v1/conversations/{id}/messages`
-- [ ] `POST /api/v1/conversations/{id}/cancel`
+- [x] `POST /api/v1/conversations/{id}/cancel`
 - [x] `GET /api/v1/conversations/{id}/events`
-- [ ] Use trusted request scope rather than client-supplied tenant/user IDs.
-- [ ] Enforce bounded message size and pagination.
-- [ ] Persist user, assistant, system, tool, and progress messages distinctly.
+- [x] Use trusted request scope rather than client-supplied tenant/user IDs.
+- [x] Enforce bounded message size and pagination.
+- [x] Persist user, assistant, system, tool, and progress messages distinctly.
 
 ### Chat execution
 
-- [ ] Add an `internal/chat` service with deterministic intent routing.
-- [ ] Retrieve bounded conversation, project, memory, decision, and graph context.
-- [ ] Invoke only typed application tools.
-- [ ] Persist citations, tool calls, task references, and assistant output.
-- [ ] Support idempotent retry of a turn.
-- [ ] Support cancellation without losing terminal state.
+- [x] Add an `internal/chat` service with deterministic intent routing.
+- [x] Retrieve bounded conversation, project, memory, decision, and graph context.
+- [x] Invoke only typed application tools.
+- [x] Persist citations, tool calls, task references, and assistant output.
+- [x] Support idempotent retry of a turn.
+- [x] Support cancellation without losing terminal state.
 
 Initial intents:
 
@@ -174,36 +174,36 @@ propose_github_action
 
 ### Streaming and task state
 
-- [ ] Add SSE with heartbeats and bounded write/idle behavior.
-- [ ] Support reconnect with `Last-Event-ID`.
-- [ ] Prevent browser refresh from duplicating agent work.
-- [ ] Add task list/detail/progress/retry/cancel endpoints.
-- [ ] Add task lease heartbeat and stale recovery.
-- [ ] Emit an event for every task transition.
-- [ ] Keep transitions explicit: pending, running, blocked, completed, failed,
+- [x] Add SSE with heartbeats and bounded write/idle behavior.
+- [x] Support reconnect with `Last-Event-ID`.
+- [x] Prevent browser refresh from duplicating agent work.
+- [x] Add task list/detail/progress/retry/cancel endpoints.
+- [x] Add task lease heartbeat and stale recovery.
+- [x] Emit an event for every task transition.
+- [x] Keep transitions explicit: pending, running, blocked, completed, failed,
       and cancelled.
 
 ### Briefing and inbox
 
-- [ ] Create an idempotent daily briefing per user/project/date.
-- [ ] Include graph recommendations, source evidence, web results, mail, calendar,
+- [x] Create an idempotent daily briefing per user/project/date.
+- [x] Include graph recommendations, source evidence, web results, mail, calendar,
       GitHub, reminders, unresolved tasks, and pending approvals.
-- [ ] Show partial-provider failures instead of hiding them.
-- [ ] Add `GET /api/v1/briefings`, detail, manual run, and read endpoints.
-- [ ] Add inbox list/detail/read/archive endpoints.
-- [ ] Deliver reports to chat and inbox.
-- [ ] Respect timezone and quiet hours.
+- [x] Show partial-provider failures instead of hiding them.
+- [x] Add `GET /api/v1/briefings`, detail, manual run, and read endpoints.
+- [x] Add inbox list/detail/read/archive endpoints.
+- [x] Deliver reports to chat and inbox.
+- [x] Respect timezone and quiet hours.
 
 ### Frontend
 
 - [x] Replace the dashboard landing page with a chat-first layout.
-- [ ] Add conversation sidebar and new-conversation flow.
-- [ ] Add streamed assistant output and progress cards.
-- [ ] Add citations, source detail, and FalkorDB graph-path drawer.
-- [ ] Add task progress, diff, test result, and approval cards.
-- [ ] Add morning report, inbox, search, calendar, reminder, and health panels.
-- [ ] Add reconnect/error/empty states and mobile layout.
-- [ ] Keep the deployed frontend static and embedded; do not require Node.js at
+- [x] Add conversation sidebar and new-conversation flow.
+- [x] Add streamed assistant output and progress cards.
+- [x] Add citations, source detail, and FalkorDB graph-path drawer.
+- [x] Add task progress, diff, test result, and approval cards.
+- [x] Add morning report, inbox, search, calendar, reminder, and health panels.
+- [x] Add reconnect/error/empty states and mobile layout.
+- [x] Keep the deployed frontend static and embedded; do not require Node.js at
       runtime.
 
 ## Approval policy
