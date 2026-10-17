@@ -110,3 +110,35 @@ func TestHandoffRejectsCompletedSource(t *testing.T) {
 		t.Fatalf("handoff error = %v, want ErrInvalidHandoff", err)
 	}
 }
+
+func TestBlockedCodingTaskCanBeRetried(t *testing.T) {
+	repository := newFakeRepository()
+	coordinator := NewCoordinator(repository)
+	task, err := coordinator.CreateTask(context.Background(), Task{ID: "task_blocked", TenantID: "tenant_demo", UserID: "user_demo", Agent: CodingAgent, Status: Blocked, Phase: "tests_failed_review_required", Priority: 1})
+	if err != nil {
+		t.Fatalf("create blocked task: %v", err)
+	}
+	retried, err := coordinator.Transition(context.Background(), task, Pending, "retrying", 0, "")
+	if err != nil {
+		t.Fatalf("retry blocked task: %v", err)
+	}
+	if retried.Status != Pending || retried.RetryCount != 1 || retried.Phase != "retrying" {
+		t.Fatalf("unexpected retried task: %#v", retried)
+	}
+}
+
+func TestCancelledCodingTaskCanBeExplicitlyRetried(t *testing.T) {
+	repository := newFakeRepository()
+	coordinator := NewCoordinator(repository)
+	task, err := coordinator.CreateTask(context.Background(), Task{ID: "task_cancelled", TenantID: "tenant_demo", UserID: "user_demo", Agent: CodingAgent, Status: Cancelled, Phase: "cancelled", Priority: 1})
+	if err != nil {
+		t.Fatalf("create cancelled task: %v", err)
+	}
+	retried, err := coordinator.Transition(context.Background(), task, Pending, "retrying", 0, "")
+	if err != nil {
+		t.Fatalf("retry cancelled task: %v", err)
+	}
+	if retried.Status != Pending || retried.RetryCount != 1 {
+		t.Fatalf("unexpected retried task: %#v", retried)
+	}
+}

@@ -9,7 +9,9 @@ func clearConfigEnv(t *testing.T) {
 		"NIGHTSHIFT_TENANT_ID", "NIGHTSHIFT_USER_ID", "NIGHTSHIFT_PROJECT_ID",
 		"FALKORDB_URL", "FALKORDB_CONTROL_GRAPH", "FALKORDB_GRAPH", "NIGHTSHIFT_DATA_DIR",
 		"FALKORDB_QUERY_TIMEOUT_MS", "NIGHTSHIFT_ACTIONS_ENABLED", "NIGHTSHIFT_AUTH_TOKEN",
-		"NIGHTSHIFT_SEARCH_URL",
+		"NIGHTSHIFT_SEARCH_URL", "NIGHTSHIFT_OPENCODE_URL", "NIGHTSHIFT_OPENCODE_TOKEN", "NIGHTSHIFT_OPENCODE_SERVER_USERNAME", "NIGHTSHIFT_OPENCODE_SERVER_PASSWORD", "NIGHTSHIFT_OPENCODE_MODEL", "NIGHTSHIFT_OPENCODE_POLICY_CONFIRMED",
+		"NIGHTSHIFT_WORKSPACE_ROOT", "NIGHTSHIFT_ALLOWED_REPOSITORIES_JSON",
+		"NIGHTSHIFT_CODING_TEST_COMMANDS_JSON", "NIGHTSHIFT_CODING_PROJECT_REPOSITORIES_JSON", "NIGHTSHIFT_CODING_RUN_TIMEOUT_SECONDS",
 		"NIGHTSHIFT_AUTH_USERNAME", "NIGHTSHIFT_AUTH_PASSWORD", "NIGHTSHIFT_AUTH_TENANT_ID",
 		"NIGHTSHIFT_AUTH_USER_ID", "NIGHTSHIFT_AUTH_APPROVER_ID",
 	} {
@@ -112,5 +114,41 @@ func TestLoadRejectsUntrustedAuthIdentitySyntax(t *testing.T) {
 	t.Setenv("NIGHTSHIFT_AUTH_USER_ID", "user with spaces")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() accepted a user identity containing spaces")
+	}
+}
+
+func TestLoadDefaultsOpenCodeModelAndBasicUsername(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("NIGHTSHIFT_OPENCODE_URL", "http://127.0.0.1:4096")
+	t.Setenv("NIGHTSHIFT_OPENCODE_POLICY_CONFIRMED", "true")
+	t.Setenv("NIGHTSHIFT_ALLOWED_REPOSITORIES_JSON", `["/tmp/example-repo"]`)
+	t.Setenv("NIGHTSHIFT_CODING_PROJECT_REPOSITORIES_JSON", `{"project_nightshift":"/tmp/example-repo"}`)
+	t.Setenv("NIGHTSHIFT_CODING_TEST_COMMANDS_JSON", `{"project_nightshift":["go","test","./..."]}`)
+	t.Setenv("NIGHTSHIFT_OPENCODE_SERVER_PASSWORD", "local-server-password")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.OpenCodeModel != "opencode/big-pickle" || c.OpenCodeServerUsername != "opencode" {
+		t.Fatalf("unexpected OpenCode defaults: model=%q username=%q", c.OpenCodeModel, c.OpenCodeServerUsername)
+	}
+}
+
+func TestLoadRequiresExplicitWorkspaceAndTestCommandWhenOpenCodeEnabled(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("NIGHTSHIFT_OPENCODE_URL", "http://127.0.0.1:4096")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted OpenCode without an allowlisted repository and test command")
+	}
+	t.Setenv("NIGHTSHIFT_OPENCODE_POLICY_CONFIRMED", "true")
+	t.Setenv("NIGHTSHIFT_ALLOWED_REPOSITORIES_JSON", `["/tmp/example-repo"]`)
+	t.Setenv("NIGHTSHIFT_CODING_PROJECT_REPOSITORIES_JSON", `{"project_nightshift":"/tmp/example-repo"}`)
+	t.Setenv("NIGHTSHIFT_CODING_TEST_COMMANDS_JSON", `{"project_nightshift":["go","test","./..."]}`)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.OpenCodeURL != "http://127.0.0.1:4096" || c.OpenCodeModel != "opencode/big-pickle" || len(c.AllowedRepositories) != 1 || c.CodingRepositories["project_nightshift"] != "/tmp/example-repo" || len(c.CodingTestCommands["project_nightshift"]) != 3 {
+		t.Fatalf("unexpected coding configuration: %#v", c)
 	}
 }

@@ -60,6 +60,10 @@ The runtime does not require Docker, Node.js, Python, SQLite, Redis, or a local
 LLM. FalkorDB itself exposes the Redis-compatible protocol; it is not being
 used as a generic Redis application database.
 
+## Local Dev2 workspace setup (Windows)
+
+Before enabling OpenCode, configure the local checkout as a trusted repository and place task worktrees outside it. See [`docs/local-workspace-setup.md`](docs/local-workspace-setup.md) and run `scripts/setup-local-workspace.ps1` from PowerShell. A source ZIP does not contain `.git`; use a real clone or initialize and commit a local baseline first. This step configures workspace paths only and does not start or configure OpenCode.
+
 ## Quick start
 
 ```bash
@@ -96,6 +100,12 @@ make graph-up
 make build
 ./bin/nightshift
 ```
+
+## OpenCode coding tasks (Dev2)
+
+NightShift can optionally delegate a scoped task to OpenCode. Configure the OpenCode server URL, a workspace root outside the source repositories, an explicit repository allowlist, a trusted server-policy acknowledgement, a project-to-local-repository mapping, and per-project test commands. See [`docs/opencode.md`](docs/opencode.md) before enabling this feature.
+
+With coding configured, a user can type a request such as `Fix the authentication bug` in a NightShift conversation. NightShift stores the request and bounded project/graph context as a durable FalkorDB task. The serial Dev2 queue worker claims the task, creates an isolated Git worktree, starts or resumes OpenCode, streams normalized progress events, and returns a bounded diff plus test results. NightShift persists the artifacts and final status, posts the outcome to chat, and leaves failed tests blocked for review. `review diff` displays the latest coding task's changed files and test output. The direct `POST /api/v1/tasks/{id}/coding` endpoint remains available for an existing task. Read artifacts with `GET /api/v1/tasks/{id}/artifacts/{artifact_id}`. Commits, pushes, pull requests, and deployment are not performed by this workflow.
 
 ## Configuration
 
@@ -243,7 +253,7 @@ the same FalkorDB deployment; scheduler leadership and task leases use the
 graph-backed coordination contract.
 
 The full install, systemd environment file, multiple-instance guidance, and
-portable binary matrix are in `docs/deployment.md`.
+portable binary matrix are in `docs/deployment.md`. For local Windows development, use `scripts/setup-local-workspace.ps1`, configure `.env` using `docs/opencode.md`, start OpenCode in one PowerShell window, and run `scripts/start-nightshift.ps1` in another. The launcher imports non-empty `.env` values while preserving workspace values already set in the current process.
 
 ## Hackathon positioning
 
