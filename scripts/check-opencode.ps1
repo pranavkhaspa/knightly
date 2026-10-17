@@ -9,12 +9,12 @@ if ($env:OPENCODE_SERVER_PASSWORD) {
 }
 
 try {
-    $response = Invoke-RestMethod -Method Get -Uri ($base + "/api/global/health") -Headers $headers -TimeoutSec 5
+    $response = Invoke-RestMethod -Method Get -Uri ($base + "/api/health") -Headers $headers -TimeoutSec 5
     if (-not $response.healthy) {
         throw "Health response did not report healthy=true."
     }
-    Write-Host "OpenCode v2 health check passed at $base/api/global/health"
+    Write-Host "OpenCode v2 health check passed at $base/api/health"
     $response | ConvertTo-Json -Depth 8
 } catch {
-    throw "OpenCode v2 API health check failed at $base/api/global/health. NightShift's current adapter requires the v2 session-location API; inspect $base/doc and use a compatible OpenCode v2 build. Details: $($_.Exception.Message)"
+    throw "OpenCode v2 API health check failed at $base/api/health. NightShift's current adapter requires the v2 session-location API; inspect $base/doc and use a compatible OpenCode v2 build. Details: $($_.Exception.Message)"
 }

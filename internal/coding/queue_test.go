@@ -30,6 +30,7 @@ func (r *queueTestRepository) SaveTask(_ context.Context, task agents.Task) erro
 	r.tasks[task.ID] = task
 	return nil
 }
+
 func (r *queueTestRepository) GetTask(_ context.Context, userID, taskID string) (agents.Task, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -39,15 +40,19 @@ func (r *queueTestRepository) GetTask(_ context.Context, userID, taskID string) 
 	}
 	return task, nil
 }
+
 func (r *queueTestRepository) PersistHandoff(context.Context, agents.Task, agents.Handoff) error {
 	return errors.New("not used")
 }
+
 func (r *queueTestRepository) ListTasks(_ context.Context, tenantID, userID, projectID string, limit int) ([]agents.Task, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	var out []agents.Task
 	for _, task := range r.tasks {
-		if task.TenantID == tenantID && task.UserID == userID && (projectID == "" || task.ProjectID == projectID) {
+		if task.TenantID == tenantID && task.UserID == userID &&
+			(projectID == "" || task.ProjectID == projectID) {
 			out = append(out, task)
 		}
 	}
@@ -56,9 +61,11 @@ func (r *queueTestRepository) ListTasks(_ context.Context, tenantID, userID, pro
 	}
 	return out, nil
 }
+
 func (r *queueTestRepository) HeartbeatTask(_ context.Context, task agents.Task, owner string, until time.Time) (agents.Task, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	stored, ok := r.tasks[task.ID]
 	if !ok {
 		return agents.Task{}, agents.ErrTaskNotFound
@@ -66,6 +73,7 @@ func (r *queueTestRepository) HeartbeatTask(_ context.Context, task agents.Task,
 	if stored.LeaseOwner != "" && stored.LeaseOwner != owner && stored.LeaseExpiresAt.After(time.Now()) {
 		return agents.Task{}, agents.ErrTaskLeaseHeld
 	}
+
 	stored.LeaseOwner, stored.LeaseExpiresAt = owner, until
 	r.tasks[task.ID] = stored
 	return stored, nil
@@ -74,29 +82,52 @@ func (r *queueTestRepository) HeartbeatTask(_ context.Context, task agents.Task,
 func TestQueueWorkerExecutesPersistedCodingTask(t *testing.T) {
 	repoPath, _ := initTestRepo(t)
 	scope := identity.Scope{TenantID: "tenant-queue", UserID: "user-queue"}
+
 	repository := &queueTestRepository{tasks: map[string]agents.Task{
-		"task-queue": {ID: "task-queue", TenantID: scope.TenantID, UserID: scope.UserID, ProjectID: "project-queue", Agent: agents.CodingAgent, Status: agents.Pending, Phase: "coding_queued", CodingTitle: "Fix a bug", CodingPrompt: "Fix the bug", RepositoryPath: repoPath, CreatedAt: time.Now().UTC()},
+		"task-queue": {
+			ID: "task-queue", TenantID: scope.TenantID, UserID: scope.UserID,
+			ProjectID: "project-queue", Agent: agents.CodingAgent,
+			Status: agents.Pending, Phase: "coding_queued",
+			CodingTitle: "Fix a bug", CodingPrompt: "Fix the bug",
+			RepositoryPath: repoPath, CreatedAt: time.Now().UTC(),
+		},
 	}}
+
 	coordinator := agents.NewCoordinator(repository)
-	manager, err := NewWorkspaceManager(WorkspaceManagerConfig{Root: filepath.Join(t.TempDir(), "workspaces"), AllowedRepositories: []string{repoPath}})
+	manager, err := NewWorkspaceManager(WorkspaceManagerConfig{
+		Root:                filepath.Join(t.TempDir(), "workspaces"),
+		AllowedRepositories: []string{repoPath},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	records := &fakeCodingRecords{done: make(chan struct{}, 2)}
-	service, err := NewService(coordinator, manager, fakeCodingAdapter{}, records, nil, ServiceConfig{RunTimeout: 5 * time.Second})
+	service, err := NewService(
+		coordinator, manager, fakeCodingAdapter{}, records, nil,
+		ServiceConfig{RunTimeout: 5 * time.Second},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := &QueueWorker{Coordinator: coordinator, Service: service, Workspaces: manager, Scope: scope, Repositories: map[string]string{"project-queue": repoPath}}
+
+	worker := &QueueWorker{
+		Coordinator: coordinator, Service: service, Workspaces: manager,
+		Scope: scope, Repositories: map[string]string{"project-queue": repoPath},
+	}
 	if err := worker.ProcessOnce(context.Background()); err != nil {
 		t.Fatalf("ProcessOnce() error = %v", err)
 	}
+
 	select {
 	case <-records.done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("queued coding task did not finish")
 	}
-	final, err := coordinator.GetTaskForScope(context.Background(), scope.TenantID, scope.UserID, "task-queue")
+
+	final, err := coordinator.GetTaskForScope(
+		context.Background(), scope.TenantID, scope.UserID, "task-queue",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,16 +142,30 @@ func TestQueueWorkerExecutesPersistedCodingTask(t *testing.T) {
 func TestQueueWorkerCompletesAgainstFakeOpenCodeServer(t *testing.T) {
 	repoPath, _ := initTestRepo(t)
 	scope := identity.Scope{TenantID: "tenant-e2e", UserID: "user-e2e"}
+
 	repository := &queueTestRepository{tasks: map[string]agents.Task{
-		"task-e2e": {ID: "task-e2e", TenantID: scope.TenantID, UserID: scope.UserID, ProjectID: "project-e2e", Agent: agents.CodingAgent, Status: agents.Pending, Phase: "coding_queued", CodingTitle: "Fix a bug", CodingPrompt: "Fix the bug", RepositoryPath: repoPath, CreatedAt: time.Now().UTC()},
+		"task-e2e": {
+			ID: "task-e2e", TenantID: scope.TenantID, UserID: scope.UserID,
+			ProjectID: "project-e2e", Agent: agents.CodingAgent,
+			Status: agents.Pending, Phase: "coding_queued",
+			CodingTitle: "Fix a bug", CodingPrompt: "Fix the bug",
+			RepositoryPath: repoPath, CreatedAt: time.Now().UTC(),
+		},
 	}}
+
 	coordinator := agents.NewCoordinator(repository)
-	manager, err := NewWorkspaceManager(WorkspaceManagerConfig{Root: filepath.Join(t.TempDir(), "workspaces"), AllowedRepositories: []string{repoPath}})
+	manager, err := NewWorkspaceManager(WorkspaceManagerConfig{
+		Root:                filepath.Join(t.TempDir(), "workspaces"),
+		AllowedRepositories: []string{repoPath},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	var sessionWorkspace string
+	var workspaceMu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/session":
 			var request struct {
@@ -130,48 +175,106 @@ func TestQueueWorkerCompletesAgainstFakeOpenCodeServer(t *testing.T) {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode session request: %v", err)
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			if request.Location.Directory == "" {
+				t.Error("OpenCode session must receive a workspace directory")
 			}
 			if request.Location.Directory == repoPath {
 				t.Error("OpenCode must receive the isolated worktree, not the source repository")
 			}
+
+			workspaceMu.Lock()
+			sessionWorkspace = request.Location.Directory
+			workspaceMu.Unlock()
+
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]string{"id": "ses_e2e"}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]string{"id": "ses_e2e"},
+			})
+
 		case r.Method == http.MethodPost && r.URL.Path == "/api/session/ses_e2e/prompt":
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/experimental/session/ses_e2e/log":
+
+		case r.Method == http.MethodGet && r.URL.Path == "/api/session/ses_e2e/event":
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "event: session.idle\ndata: {\"seq\":\"1\",\"payload\":{\"type\":\"session.idle\",\"status\":\"idle\"}}\n\n")
+			_, _ = fmt.Fprint(
+				w,
+				"event: session.idle\ndata: {\"seq\":\"1\",\"payload\":{\"type\":\"session.idle\",\"status\":\"idle\"}}\n\n",
+			)
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-		case r.Method == http.MethodGet && r.URL.Path == "/api/session/ses_e2e/diff":
+
+		case r.Method == http.MethodGet && r.URL.Path == "/session/ses_e2e/diff":
+			workspaceMu.Lock()
+			expectedWorkspace := sessionWorkspace
+			workspaceMu.Unlock()
+
+			gotWorkspace := r.URL.Query().Get("directory")
+			if gotWorkspace == "" {
+				t.Error("OpenCode diff request must include the workspace directory query parameter")
+			}
+			if gotWorkspace != expectedWorkspace {
+				t.Errorf("diff directory query = %q, want %q", gotWorkspace, expectedWorkspace)
+			}
+
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []FileDiff{{Path: "main.go", Patch: "-old\n+fixed", Additions: 1, Deletions: 1, Status: "modified"}}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []FileDiff{{
+					Path: "main.go", Patch: "-old\n+fixed",
+					Additions: 1, Deletions: 1, Status: "modified",
+				}},
+			})
+
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
-	runner := &CommandTestRunner{Workspaces: manager, CommandsByProject: map[string][]string{"project-e2e": {"go", "test", "./..."}}, Timeout: 10 * time.Second}
-	adapter, err := NewOpenCodeAdapter(OpenCodeConfig{BaseURL: server.URL, TestRunner: runner})
+
+	runner := &CommandTestRunner{
+		Workspaces: manager,
+		CommandsByProject: map[string][]string{
+			"project-e2e": {"go", "test", "./..."},
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	adapter, err := NewOpenCodeAdapter(OpenCodeConfig{
+		BaseURL: server.URL, TestRunner: runner,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	records := &fakeCodingRecords{done: make(chan struct{}, 2)}
-	service, err := NewService(coordinator, manager, adapter, records, nil, ServiceConfig{RunTimeout: 5 * time.Second})
+	service, err := NewService(
+		coordinator, manager, adapter, records, nil,
+		ServiceConfig{RunTimeout: 5 * time.Second},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := &QueueWorker{Coordinator: coordinator, Service: service, Workspaces: manager, Scope: scope, Repositories: map[string]string{"project-e2e": repoPath}}
+
+	worker := &QueueWorker{
+		Coordinator: coordinator, Service: service, Workspaces: manager,
+		Scope: scope, Repositories: map[string]string{"project-e2e": repoPath},
+	}
 	if err := worker.ProcessOnce(context.Background()); err != nil {
 		t.Fatalf("ProcessOnce() error = %v", err)
 	}
+
 	select {
 	case <-records.done:
 	case <-time.After(4 * time.Second):
 		t.Fatal("fake OpenCode coding run did not finish")
 	}
-	final, err := coordinator.GetTaskForScope(context.Background(), scope.TenantID, scope.UserID, "task-e2e")
+
+	final, err := coordinator.GetTaskForScope(
+		context.Background(), scope.TenantID, scope.UserID, "task-e2e",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

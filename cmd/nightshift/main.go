@@ -273,6 +273,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
+	// Report only whether coding settings are present; never log tokens/passwords.
+	log.Printf(
+		"event=coding_config_loaded opencode_url_configured=%t policy_confirmed=%t workspace_root_configured=%t allowed_repositories=%d project_mappings=%d test_command_projects=%d model_configured=%t",
+		strings.TrimSpace(cfg.OpenCodeURL) != "",
+		cfg.OpenCodePolicyConfirmed,
+		strings.TrimSpace(cfg.WorkspaceRoot) != "",
+		len(cfg.AllowedRepositories),
+		len(cfg.CodingRepositories),
+		len(cfg.CodingTestCommands),
+		strings.TrimSpace(cfg.OpenCodeModel) != "",
+	)
 
 	graph, err := falkor.New(cfg.FalkorURL, cfg.ControlGraph, cfg.UserGraph, cfg.QueryTimeoutMillis)
 	if err != nil {
@@ -283,6 +294,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("application construction error: %v", err)
 	}
+	log.Printf(
+		"event=coding_services_initialized coding_service=%t workspace_manager=%t project_mappings=%d",
+		app.coding != nil,
+		app.codingWorkspaces != nil,
+		len(app.config.CodingRepositories),
+	)
 
 	policy, err := auth.New(auth.Config{
 		Token: cfg.AuthToken, Username: cfg.AuthUsername, Password: cfg.AuthPassword,
@@ -453,7 +470,15 @@ func (a *application) initialize(ctx context.Context) error {
 		return fmt.Errorf("start scheduler: %w", err)
 	}
 	a.setInitialization(stateReady, "")
-	if a.coding != nil && a.codingWorkspaces != nil && len(a.config.CodingRepositories) > 0 {
+	codingWorkerEnabled := a.coding != nil && a.codingWorkspaces != nil && len(a.config.CodingRepositories) > 0
+	log.Printf(
+		"event=coding_worker_configuration enabled=%t coding_service=%t workspace_manager=%t project_mappings=%d",
+		codingWorkerEnabled,
+		a.coding != nil,
+		a.codingWorkspaces != nil,
+		len(a.config.CodingRepositories),
+	)
+	if codingWorkerEnabled {
 		workerCtx, cancel := context.WithCancel(context.Background())
 		a.codingQueueCancel = cancel
 		worker := &coding.QueueWorker{Coordinator: a.coordinator, Service: a.coding, Workspaces: a.codingWorkspaces, Scope: a.scope, Repositories: a.config.CodingRepositories, PollInterval: time.Second, OnError: func(err error) { log.Printf("event=coding_queue_error error=%q", err) }}

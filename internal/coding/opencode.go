@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -114,7 +115,7 @@ func (a *OpenCodeAdapter) Start(ctx context.Context, req RunRequest) (RunHandle,
 	if err != nil {
 		return RunHandle{}, fmt.Errorf("%w: invalid workspace path", ErrInvalidRequest)
 	}
-	body := map[string]interface{}{"title": req.Title, "location": map[string]string{"directory": workspace}}
+	body := map[string]interface{}{"location": map[string]string{"directory": workspace}}
 	if a.model != "" {
 		parts := strings.SplitN(a.model, "/", 2)
 		body["model"] = map[string]string{"providerID": parts[0], "id": parts[1]}
@@ -129,7 +130,7 @@ func (a *OpenCodeAdapter) Start(ctx context.Context, req RunRequest) (RunHandle,
 		return RunHandle{}, fmt.Errorf("%w: OpenCode returned an empty session ID", ErrProviderUnavailable)
 	}
 	handle := RunHandle{TaskID: req.TaskID, ProjectID: req.ProjectID, Provider: a.Name(), ProviderSessionID: created.ID, WorkspacePath: workspace}
-	promptBody := map[string]interface{}{"id": nil, "prompt": map[string]string{"text": buildOpenCodePrompt(req)}, "resume": true}
+	promptBody := map[string]interface{}{"prompt": map[string]string{"text": buildOpenCodePrompt(req)}, "resume": true}
 	if err := a.requestJSON(ctx, http.MethodPost, "/api/session/"+url.PathEscape(created.ID)+"/prompt", promptBody, nil); err != nil {
 		// Return the handle with the error: the session may have been created and
 		// must be persisted by the caller to avoid starting duplicate work.
@@ -178,7 +179,7 @@ func (a *OpenCodeAdapter) Resume(ctx context.Context, sessionID string, req RunR
 	}
 	handle := RunHandle{TaskID: req.TaskID, ProjectID: req.ProjectID, Provider: a.Name(), ProviderSessionID: sessionID, WorkspacePath: workspace}
 	if strings.TrimSpace(req.Prompt) != "" {
-		body := map[string]interface{}{"id": nil, "prompt": map[string]string{"text": buildOpenCodePrompt(req)}, "resume": true}
+		body := map[string]interface{}{"prompt": map[string]string{"text": buildOpenCodePrompt(req)}, "resume": true}
 		if err := a.requestJSON(ctx, http.MethodPost, "/api/session/"+url.PathEscape(sessionID)+"/prompt", body, nil); err != nil {
 			return handle, fmt.Errorf("resume OpenCode prompt: %w", err)
 		}
@@ -192,11 +193,18 @@ func (a *OpenCodeAdapter) Events(ctx context.Context, handle RunHandle) (<-chan 
 	if a == nil || strings.TrimSpace(handle.ProviderSessionID) == "" {
 		return nil, fmt.Errorf("%w: provider session is required", ErrInvalidRequest)
 	}
-	query := url.Values{"after": {handle.EventCursor}, "follow": {"true"}}
-	if handle.EventCursor == "" {
-		query.Set("after", "0")
+	// OpenCode's /event endpoint expects a numeric durable-log sequence in
+	// the "after" query parameter. Event IDs (for example, "evt_...") are
+	// opaque identifiers and must never be used as this cursor.
+	cursor := strings.TrimSpace(handle.EventCursor)
+	if cursor == "" {
+		cursor = "0"
 	}
-	endpoint := a.endpoint("/api/experimental/session/" + url.PathEscape(handle.ProviderSessionID) + "/log")
+	if _, err := strconv.ParseUint(cursor, 10, 64); err != nil {
+		return nil, fmt.Errorf("%w: OpenCode event cursor must be a non-negative integer sequence", ErrInvalidRequest)
+	}
+	query := url.Values{"after": {cursor}}
+	endpoint := a.endpoint("/api/session/" + url.PathEscape(handle.ProviderSessionID) + "/event")
 	endpoint.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -297,7 +305,9 @@ func (a *OpenCodeAdapter) Cancel(ctx context.Context, handle RunHandle) error {
 	if a == nil || strings.TrimSpace(handle.ProviderSessionID) == "" {
 		return fmt.Errorf("%w: provider session is required", ErrInvalidRequest)
 	}
-	return a.requestJSON(ctx, http.MethodPost, "/api/session/"+url.PathEscape(handle.ProviderSessionID)+"/abort", nil, nil)
+	query := url.Values{}
+	query.Set("directory", handle.WorkspacePath)
+	return a.requestJSONWithQuery(ctx, http.MethodPost, "/session/"+url.PathEscape(handle.ProviderSessionID)+"/abort", query, nil, nil)
 }
 
 func (a *OpenCodeAdapter) Diff(ctx context.Context, handle RunHandle) (DiffResult, error) {
@@ -305,7 +315,9 @@ func (a *OpenCodeAdapter) Diff(ctx context.Context, handle RunHandle) (DiffResul
 		return DiffResult{}, fmt.Errorf("%w: provider session is required", ErrInvalidRequest)
 	}
 	var files []FileDiff
-	if err := a.requestJSON(ctx, http.MethodGet, "/api/session/"+url.PathEscape(handle.ProviderSessionID)+"/diff", nil, &files); err != nil {
+	query := url.Values{}
+	query.Set("directory", handle.WorkspacePath)
+	if err := a.requestJSONWithQuery(ctx, http.MethodGet, "/session/"+url.PathEscape(handle.ProviderSessionID)+"/diff", query, nil, &files); err != nil {
 		return DiffResult{}, fmt.Errorf("retrieve OpenCode diff: %w", err)
 	}
 	result := DiffResult{TaskID: handle.TaskID, SessionID: handle.ProviderSessionID, Files: make([]FileDiff, 0, len(files))}
@@ -356,10 +368,19 @@ func buildOpenCodePrompt(req RunRequest) string {
 }
 
 func (a *OpenCodeAdapter) requestJSON(ctx context.Context, method, path string, payload, out interface{}) error {
+	return a.requestJSONURL(ctx, method, a.endpoint(path), payload, out)
+}
+
+func (a *OpenCodeAdapter) requestJSONWithQuery(ctx context.Context, method, path string, query url.Values, payload, out interface{}) error {
+	endpoint := a.endpoint(path)
+	endpoint.RawQuery = query.Encode()
+	return a.requestJSONURL(ctx, method, endpoint, payload, out)
+}
+
+func (a *OpenCodeAdapter) requestJSONURL(ctx context.Context, method string, endpoint *url.URL, payload, out interface{}) error {
 	if ctx == nil {
 		return fmt.Errorf("%w: context is required", ErrInvalidRequest)
 	}
-	endpoint := a.endpoint(path)
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -455,6 +476,16 @@ func normalizeOpenCodeEvent(name string, raw []byte, handle RunHandle) AgentEven
 		}
 	}
 
+	// The durable session-log envelope carries its numeric replay cursor at
+	// durable.seq, separately from the opaque event ID at the top level.
+	if durable, ok := payload["durable"].(map[string]interface{}); ok {
+		if seq, ok := durable["seq"]; ok {
+			if cursor, ok := numericEventSequence(seq); ok {
+				payload["sequence"] = cursor
+			}
+		}
+	}
+
 	eventType := strings.TrimSpace(name)
 	if eventType == "message" || eventType == "event" {
 		eventType = ""
@@ -487,11 +518,8 @@ func normalizeOpenCodeEvent(name string, raw []byte, handle RunHandle) AgentEven
 			}
 		}
 	}
-	if event.Sequence == "" && event.ID != "" {
-		// OpenCode's durable session log uses its outer ID as the resume cursor
-		// in versions where no separate sequence field is included.
-		event.Sequence = event.ID
-	}
+	// Deliberately do not fall back to event.ID here. OpenCode IDs are opaque
+	// strings; Events() only accepts numeric durable-log sequence cursors.
 	lower := strings.ToLower(eventType)
 	status := ""
 	if event.Data != nil {
@@ -508,6 +536,20 @@ func normalizeOpenCodeEvent(name string, raw []byte, handle RunHandle) AgentEven
 		event.Data = nil
 	}
 	return event
+}
+
+// numericEventSequence converts the durable-log sequence into the decimal
+// cursor accepted by OpenCode's "after" query parameter. Non-integral,
+// negative, and otherwise malformed values are rejected.
+func numericEventSequence(value interface{}) (string, bool) {
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "" {
+		return "", false
+	}
+	if _, err := strconv.ParseUint(text, 10, 64); err != nil {
+		return "", false
+	}
+	return text, true
 }
 
 func (a *OpenCodeAdapter) applyAuth(req *http.Request) {
