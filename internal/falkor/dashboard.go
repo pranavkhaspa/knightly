@@ -3,6 +3,8 @@ package falkor
 import (
 	"context"
 	"fmt"
+
+	"github.com/pranavkhaspa/knightly/internal/identity"
 )
 
 // Dashboard is the small, graph-backed read model used by the embedded UI.
@@ -40,6 +42,17 @@ type TaskStatus struct {
 // missing task is a valid empty state; a missing graph path is returned as an
 // empty path so the UI can explain that no evidence is connected yet.
 func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
+	return c.dashboard(ctx, identity.Scope{})
+}
+
+func (c *Client) DashboardForScope(ctx context.Context, scope identity.Scope) (Dashboard, error) {
+	if err := scope.Validate(); err != nil {
+		return Dashboard{}, err
+	}
+	return c.dashboard(ctx, scope)
+}
+
+func (c *Client) dashboard(ctx context.Context, scope identity.Scope) (Dashboard, error) {
 	dashboard := Dashboard{
 		GraphPath: make([]GraphPathNode, 0),
 		Tasks:     make([]TaskStatus, 0),
@@ -52,6 +65,7 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 	pathResult, err := c.user.ROQuery(`
 		MATCH (p:Project)-[:HAS_REQUIREMENT]->(r:Requirement)-[:NEEDS]->(tech:Technology)
 		WHERE p.tenant_id IS NOT NULL AND p.user_id IS NOT NULL
+		  AND ($tenant_id = "" OR p.tenant_id = $tenant_id) AND ($user_id = "" OR p.user_id = $user_id)
 		  AND r.tenant_id = p.tenant_id AND r.user_id = p.user_id
 		  AND tech.tenant_id = p.tenant_id AND tech.user_id = p.user_id
 		RETURN p.id AS project_id, p.name AS project_name, p.status AS project_status,
@@ -60,7 +74,7 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 		       tech.category AS technology_category
 		ORDER BY coalesce(r.priority, 999999), p.id
 		LIMIT 1
-	`, nil, c.options())
+	`, dashboardScopeParams(scope), c.options())
 	if err != nil {
 		return dashboard, fmt.Errorf("read graph path: %w", err)
 	}
@@ -89,10 +103,11 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 		projectResult, projectErr := c.user.ROQuery(`
 			MATCH (p:Project)
 			WHERE p.tenant_id IS NOT NULL AND p.user_id IS NOT NULL
+			  AND ($tenant_id = "" OR p.tenant_id = $tenant_id) AND ($user_id = "" OR p.user_id = $user_id)
 			RETURN p.id AS project_id, p.name AS project_name, p.status AS project_status
 			ORDER BY p.id
 			LIMIT 1
-		`, nil, c.options())
+		`, dashboardScopeParams(scope), c.options())
 		if projectErr != nil {
 			return dashboard, fmt.Errorf("read project: %w", projectErr)
 		}
@@ -112,12 +127,13 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 	taskResult, err := c.user.ROQuery(`
 		MATCH (t:Task)
 		WHERE t.tenant_id IS NOT NULL AND t.user_id IS NOT NULL
+		  AND ($tenant_id = "" OR t.tenant_id = $tenant_id) AND ($user_id = "" OR t.user_id = $user_id)
 		RETURN t.id AS task_id, t.title AS task_title, t.agent_type AS task_agent,
 		       t.status AS task_status, t.priority AS task_priority,
 		       t.updated_at AS task_updated_at
 		ORDER BY coalesce(t.updated_at, 0) DESC, t.id
 		LIMIT 20
-	`, nil, c.options())
+	`, dashboardScopeParams(scope), c.options())
 	if err != nil {
 		return dashboard, fmt.Errorf("read tasks: %w", err)
 	}
@@ -133,4 +149,8 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 		})
 	}
 	return dashboard, nil
+}
+
+func dashboardScopeParams(scope identity.Scope) map[string]interface{} {
+	return map[string]interface{}{"tenant_id": scope.TenantID, "user_id": scope.UserID}
 }
