@@ -1,6 +1,6 @@
 APP := nightshift
 
-.PHONY: fmt test vet build build-linux run graph-up graph-down smoke health-check concurrency-evidence integration-test
+.PHONY: fmt test vet build build-linux verify-arch run graph-up graph-down smoke health-check concurrency-evidence integration-test
 
 fmt:
 	go fmt ./...
@@ -18,6 +18,9 @@ build-linux:
 	mkdir -p dist
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/$(APP)-linux-amd64 ./cmd/nightshift
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/$(APP)-linux-arm64 ./cmd/nightshift
+
+# Prove both production architectures compile from a clean module cache.
+verify-arch: build-linux
 
 run:
 	go run ./cmd/nightshift

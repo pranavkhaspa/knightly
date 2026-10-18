@@ -23,6 +23,12 @@ var (
 // Config describes one trusted deployment identity. Token authentication and
 // HTTP Basic authentication may be enabled together; either valid credential
 // form is accepted. Scope and ApproverID are always supplied by configuration.
+//
+// When Resolver is set it replaces the static identity: the resolver verifies
+// per-request evidence (an OIDC token or a trusted-proxy signature) and supplies
+// the tenant, user, and approver for that request. The static Scope and
+// ApproverID are then used only as the installation fallback for local
+// loopback-only development.
 type Config struct {
 	Token                 string
 	Username              string
@@ -31,6 +37,7 @@ type Config struct {
 	ApproverID            string
 	RequireAuthentication bool
 	PublicPaths           []string
+	Resolver              IdentityResolver
 }
 
 // Identity is the authenticated deployment identity used by handlers to route
@@ -47,6 +54,7 @@ type Middleware struct {
 	identity              Identity
 	requireAuthentication bool
 	publicPaths           map[string]struct{}
+	resolver              IdentityResolver
 }
 
 // New validates the trusted identity and returns an HTTP middleware policy.
@@ -75,8 +83,10 @@ func New(config Config) (*Middleware, error) {
 	}
 
 	enabled := strings.TrimSpace(config.Token) != "" || (strings.TrimSpace(config.Username) != "" && strings.TrimSpace(config.Password) != "")
-	if config.RequireAuthentication && !enabled {
-		return nil, fmt.Errorf("%w: credentials are required", ErrInvalidConfig)
+	// A configured resolver verifies per-request identity evidence, so it
+	// satisfies the authentication requirement on its own.
+	if config.RequireAuthentication && !enabled && config.Resolver == nil {
+		return nil, fmt.Errorf("%w: credentials or a resolver are required", ErrInvalidConfig)
 	}
 
 	publicPaths := make(map[string]struct{}, len(config.PublicPaths))
@@ -93,12 +103,15 @@ func New(config Config) (*Middleware, error) {
 		identity:              Identity{Scope: config.Scope, ApproverID: config.ApproverID},
 		requireAuthentication: config.RequireAuthentication,
 		publicPaths:           publicPaths,
+		resolver:              config.Resolver,
 	}, nil
 }
 
 // Wrap adds security headers, authenticates protected requests, and attaches
-// the configured identity to the request context. PublicPaths should be used
-// only for narrowly scoped operational endpoints such as /health/live.
+// the resolved identity to the request context. When a resolver is configured
+// the resolver is the authentication authority and its failure fails closed.
+// PublicPaths should be used only for narrowly scoped operational endpoints
+// such as /health/live.
 func (m *Middleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		setSecurityHeaders(writer)
@@ -107,6 +120,17 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		if _, public := m.publicPaths[request.URL.Path]; public {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		if m.resolver != nil {
+			resolved, err := m.resolver.Resolve(request.Context(), request)
+			if err != nil {
+				writer.Header().Set("WWW-Authenticate", `Bearer realm="nightshift"`)
+				http.Error(writer, "authentication required", http.StatusUnauthorized)
+				return
+			}
+			request = request.WithContext(withIdentity(request.Context(), resolved))
 			next.ServeHTTP(writer, request)
 			return
 		}

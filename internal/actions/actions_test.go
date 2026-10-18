@@ -228,3 +228,14 @@ type failingExecutor struct {
 func (e failingExecutor) Execute(context.Context, Action) (ExecutionResult, error) {
 	return ExecutionResult{}, e.err
 }
+
+func TestGitHubWriteKindsAreValid(t *testing.T) {
+	for _, kind := range []Kind{GitHubIssue, GitHubBranch, GitHubCommit, GitHubPush, GitHubPullRequest, LocalPlan} {
+		if !kind.Valid() {
+			t.Errorf("Kind(%q).Valid() = false, want true", kind)
+		}
+	}
+	if Kind("github_merge").Valid() {
+		t.Error("unknown kind should not be valid")
+	}
+}

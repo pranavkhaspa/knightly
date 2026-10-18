@@ -72,6 +72,15 @@ func (c *Client) Close() error {
 	return c.db.Conn.Close()
 }
 
+// AddHook installs a go-redis hook on the underlying connection so callers can
+// observe command latency and errors without wrapping every repository.
+func (c *Client) AddHook(hook redis.Hook) {
+	if c == nil || c.db == nil || c.db.Conn == nil || hook == nil {
+		return
+	}
+	c.db.Conn.AddHook(hook)
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
