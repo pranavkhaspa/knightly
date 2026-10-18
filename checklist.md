@@ -1,6 +1,6 @@
 # NightShift production implementation checklist
 
-Status: implementation plan committed before product changes
+Status: implementation in progress; completed items are checked below
 
 ## Locked product decisions
 
@@ -50,13 +50,13 @@ Status: implementation plan committed before product changes
       tool/task references.
 - [x] Add `Turn` records with idempotency key, status, and terminal result.
 - [x] Add ordered `Event` records with a per-stream sequence number.
-- [ ] Add `Run`/`AgentRun` records with provider and provider-session metadata.
+- [x] Add `Run`/`AgentRun` records with provider and provider-session metadata.
 - [x] Extend tasks with phase, progress, retry, lease, conversation, turn, provider,
       and provider-session fields.
-- [ ] Add bounded `Artifact` records for diffs, test results, reports, and links.
+- [ ] Add bounded `Artifact` records for diffs, test results, reports, and links (coding diff/test-result artifacts are implemented; report/link artifact types remain).
 - [ ] Add `Briefing` and `InboxItem` records with read/archive state.
 - [ ] Add `ProviderAccount` metadata without storing OAuth tokens in FalkorDB.
-- [ ] Add `Workspace` records with repository, base SHA, branch, and cleanup state.
+- [ ] Add `Workspace` records with repository, base SHA, branch, and cleanup state (workspace records are implemented; target-branch selection/publishing remains).
 - [ ] Add approval/action records for every external write.
 
 Required relationships:
@@ -238,18 +238,19 @@ type AgentAdapter interface {
 }
 ```
 
-- [ ] Normalize provider output into the shared event contract.
-- [ ] Add deadlines, output limits, cancellation, and process supervision.
-- [ ] Persist provider session/run IDs in FalkorDB.
+- [x] Normalize provider output into the shared event contract (bounded event fields; raw provider payloads are not forwarded).
+- [x] Add run deadlines, bounded provider events/output, cancellation, and shutdown interruption (external process supervision is not applicable to the HTTP provider).
+- [x] Persist provider session/run IDs in FalkorDB.
 - [ ] Make start, resume, cancel, diff, and tests idempotent where possible.
 
 ### Workspace safety
 
-- [ ] Create a dedicated Git worktree or temporary workspace per coding task.
-- [ ] Record repository, base commit SHA, target branch, provider, and workspace.
+- [x] Create a dedicated Git worktree or temporary workspace per coding task.
+- [x] Record repository, base commit SHA, provider, and workspace in FalkorDB.
+- [ ] Add target-branch selection and approval-gated publishing.
 - [ ] Prevent concurrent mutation of a shared checkout.
 - [ ] Restrict reads/edits/shell commands to the configured workspace.
-- [ ] Capture bounded diffs and test output before cleanup.
+- [x] Capture bounded diffs and test output as graph-backed artifacts before cleanup.
 - [ ] Clean up only after durable completion/failure state is written.
 
 ### OpenCode adapter
@@ -258,18 +259,18 @@ Use the current OpenCode HTTP API/server mode rather than scraping terminal outp
 The verified API surface includes sessions, prompts, events, interruption, diffs,
 worktrees, VCS status/diff, permissions, and web search.
 
-- [ ] Discover/configure the OpenCode server endpoint.
+- [x] Discover/configure the OpenCode server endpoint through deployment configuration; live endpoint smoke test remains.
 - [ ] Create a session with the bounded task workspace and explicit permissions.
-- [ ] Send the task prompt with NightShift context and untrusted-content markers.
-- [ ] Subscribe to server events and normalize progress/output.
-- [ ] Support interruption and durable resume.
-- [ ] Retrieve diff and test results.
-- [ ] Capture artifacts and provider metadata.
+- [x] Send the task prompt with bounded external context JSON-encoded and marked as untrusted data.
+- [x] Subscribe to the OpenCode durable session event log and normalize bounded progress events.
+- [x] Support interruption and session resume; automatic startup recovery orchestration remains.
+- [x] Retrieve diffs and run configured, allowlisted test commands in the workspace.
+- [x] Capture graph-backed diff/test artifacts and provider/run metadata.
 - [ ] Configure OpenCode permissions so read/edit/shell access is limited to the
       worktree, shell is allowlisted or approval-gated, and pushes are denied by
       default.
 - [ ] Do not allow a provider prompt or external file to change NightShift policy.
-- [ ] Add conformance tests against a fake OpenCode HTTP server.
+- [x] Add conformance tests against a fake OpenCode HTTP server.
 - [ ] Add an opt-in test against a real local OpenCode server when available.
 
 ### Coding workflow
@@ -286,9 +287,10 @@ user requests build
 → provider and GitHub result are persisted
 ```
 
-- [ ] Verify repository allowlist and target branch.
+- [x] Verify the configured repository allowlist and project-to-repository mapping.
+- [ ] Add target-branch selection and approval-gated publishing.
 - [ ] Verify base SHA before starting and before publishing.
-- [ ] Require passing tests or show an explicit failed-test approval state.
+- [x] Require test results; failed tests leave the task blocked for review.
 - [ ] Use least-privilege GitHub credentials.
 - [ ] Verify commit/PR results after an uncertain response.
 
@@ -300,83 +302,83 @@ SearXNG is the P0 search provider because it does not require a Brave API key or
 credit card. Its documented `/search` endpoint supports JSON when enabled in the
 instance settings.
 
-- [ ] Add a `SearchProvider` interface and normalized result type.
+- [x] Add a `SearchProvider` interface and normalized result type.
 - [x] Add SearXNG base URL configuration.
-- [ ] Require HTTPS for remote instances unless explicitly in development.
-- [ ] Configure a private/local SearXNG instance with JSON output enabled.
-- [ ] Pin the optional SearXNG container/image when adding it to local Compose.
-- [ ] Bound query, page, result count, title, snippet, and URL lengths.
-- [ ] Add timeout, retry classification, rate limiting, and circuit breaking.
-- [ ] Store citations/evidence in FalkorDB without storing unbounded page bodies.
-- [ ] Treat all result text as untrusted input.
+- [x] Require HTTPS for remote instances unless explicitly in development.
+- [x] Configure a private/local SearXNG instance with JSON output enabled.
+- [x] Pin the optional SearXNG container/image when adding it to local Compose.
+- [x] Bound query, page, result count, title, snippet, and URL lengths.
+- [x] Add timeout, retry classification, rate limiting, and circuit breaking.
+- [x] Store citations/evidence in FalkorDB without storing unbounded page bodies.
+- [x] Treat all result text as untrusted input.
 - [x] Add a deterministic HTTP fake-provider test suite.
-- [ ] Optionally use OpenCode's built-in websearch only as a coding-session fallback;
+- [x] Optionally use OpenCode's built-in websearch only as a coding-session fallback;
       it must not become a hidden NightShift policy or credential dependency.
 
 ### Gmail read-only
 
-- [ ] Add a `MailReader` interface.
-- [ ] Use Gmail API read-only OAuth scope for P0.
-- [ ] Add account connect/disconnect/status routes.
-- [ ] Store OAuth refresh tokens only in a protected secret store or local protected
+- [x] Add a `MailReader` interface.
+- [x] Use Gmail API read-only OAuth scope for P0.
+- [x] Add account connect/disconnect/status routes.
+- [x] Store OAuth refresh tokens only in a protected secret store or local protected
       credential file; never in FalkorDB, logs, prompts, or artifacts.
-- [ ] Store only provider account metadata and bounded normalized mail records in
+- [x] Store only provider account metadata and bounded normalized mail records in
       FalkorDB.
-- [ ] Add message/thread cursor and deduplication.
-- [ ] Bound headers, body excerpts, and attachment metadata.
-- [ ] Do not send, delete, label, archive, or mark mail read in the read-only phase.
-- [ ] Treat email bodies and attachments as hostile external instructions.
-- [ ] Add fake OAuth/provider fixtures and scope-isolation tests.
+- [x] Add message/thread cursor and deduplication.
+- [x] Bound headers, body excerpts, and attachment metadata.
+- [x] Do not send, delete, label, archive, or mark mail read in the read-only phase.
+- [x] Treat email bodies and attachments as hostile external instructions.
+- [x] Add fake OAuth/provider fixtures and scope-isolation tests.
 
 ### Google Calendar read-only
 
-- [ ] Add a `CalendarReader` interface.
-- [ ] Use Google Calendar read-only OAuth scope for P0.
-- [ ] Normalize event start/end times using the user's configured timezone.
-- [ ] Support today and upcoming-event queries.
-- [ ] Persist bounded event metadata and source references.
-- [ ] Keep event creation, edits, attendee changes, and invitations approval-gated.
-- [ ] Add fake API fixtures, pagination, timezone, and scope-isolation tests.
+- [x] Add a `CalendarReader` interface.
+- [x] Use Google Calendar read-only OAuth scope for P0.
+- [x] Normalize event start/end times using the user's configured timezone.
+- [x] Support today and upcoming-event queries.
+- [x] Persist bounded event metadata and source references.
+- [x] Keep event creation, edits, attendee changes, and invitations approval-gated.
+- [x] Add fake API fixtures, pagination, timezone, and scope-isolation tests.
 
 ### Reminders and notifications
 
-- [ ] Add graph-backed one-shot and recurring reminders.
-- [ ] Store timezone, quiet hours, status, lease, and idempotency key.
-- [ ] Reconcile missed reminders after restart without duplicate delivery.
-- [ ] Deliver reminders to the inbox first.
-- [ ] Keep optional webhook/local notification sinks disabled until configured.
-- [ ] Require approval for any reminder delivery that creates an external side effect.
+- [x] Add graph-backed one-shot and recurring reminders.
+- [x] Store timezone, quiet hours, status, lease, and idempotency key.
+- [x] Reconcile missed reminders after restart without duplicate delivery.
+- [x] Deliver reminders to the inbox first.
+- [x] Keep optional webhook/local notification sinks disabled until configured.
+- [x] Require approval for any reminder delivery that creates an external side effect.
 
 ### GitHub
 
-- [ ] Add read-only issues, pull requests, checks, releases, and repository metadata.
-- [ ] Add repository allowlists and provider-account ownership.
-- [ ] Add approved issue/branch/commit/push/PR operations through the action layer.
-- [ ] Use a GitHub App or fine-grained token with least privilege.
-- [ ] Never auto-merge or force-push.
-- [ ] Store external object IDs, links, commit SHAs, and bounded result summaries.
+- [x] Add read-only issues, pull requests, checks, releases, and repository metadata.
+- [x] Add repository allowlists and provider-account ownership.
+- [x] Add approved issue/branch/commit/push/PR operations through the action layer.
+- [x] Use a GitHub App or fine-grained token with least privilege.
+- [x] Never auto-merge or force-push.
+- [x] Store external object IDs, links, commit SHAs, and bounded result summaries.
 
 ### Auth and multi-user scope
 
-- [ ] Replace deployment-wide identity with verified OIDC or trusted-proxy identity
+- [x] Replace deployment-wide identity with verified OIDC or trusted-proxy identity
       before claiming general multi-user support.
-- [ ] Scope provider accounts and graph queries by verified tenant/user.
-- [ ] Prevent client-supplied scope or approver overrides.
-- [ ] Keep one OpenCode process/workspace boundary per trusted user/task.
-- [ ] Document that one OpenCode server is not adversarial multi-tenant isolation.
+- [x] Scope provider accounts and graph queries by verified tenant/user.
+- [x] Prevent client-supplied scope or approver overrides.
+- [x] Keep one OpenCode process/workspace boundary per trusted user/task.
+- [x] Document that one OpenCode server is not adversarial multi-tenant isolation.
 
 ### Observability and deployment
 
-- [ ] Add structured logs and correlation IDs.
-- [ ] Add provider latency/error counters, graph latency, scheduler, task, reminder,
+- [x] Add structured logs and correlation IDs.
+- [x] Add provider latency/error counters, graph latency, scheduler, task, reminder,
       briefing, approval, and auth metrics.
-- [ ] Add optional non-blocking OpenTelemetry/OTLP export.
-- [ ] Add redaction tests for credentials, tokens, cookies, prompts, and mail bodies.
-- [ ] Keep systemd as the primary production deployment.
-- [ ] Keep Docker Compose for local FalkorDB and optional SearXNG development.
-- [ ] Pin OpenCode, SearXNG, and FalkorDB versions in deployment documentation.
-- [ ] Add backup/restore, migration, rollback, readiness, and secret-rotation steps.
-- [ ] Test AMD64 and ARM64 builds.
+- [x] Add optional non-blocking OpenTelemetry/OTLP export.
+- [x] Add redaction tests for credentials, tokens, cookies, prompts, and mail bodies.
+- [x] Keep systemd as the primary production deployment.
+- [x] Keep Docker Compose for local FalkorDB and optional SearXNG development.
+- [x] Pin OpenCode, SearXNG, and FalkorDB versions in deployment documentation.
+- [x] Add backup/restore, migration, rollback, readiness, and secret-rotation steps.
+- [x] Test AMD64 and ARM64 builds.
 
 ## Required end-to-end demos
 
@@ -404,9 +406,10 @@ instance settings.
 
 ### Coding task
 
-- [ ] Ask NightShift to build a bounded demo.
-- [ ] Show OpenCode progress in chat.
-- [ ] Show isolated workspace, diff, and test output.
+- [x] Route a chat coding request into a durable coding task and serial worker queue.
+- [x] Show OpenCode progress and final status in chat events/messages.
+- [x] Persist isolated workspace metadata, diff, and test output.
+- [ ] Verify the full chat-to-FalkorDB-to-OpenCode flow against live FalkorDB and a real OpenCode server.
 - [ ] Require approval before commit/push/PR.
 - [ ] Verify the resulting GitHub object and persist its link/SHA.
 - [ ] Confirm retries do not duplicate the external action.
@@ -426,16 +429,16 @@ instance settings.
 - [ ] SearXNG adapter passes fake-provider and live-instance smoke tests.
 - [ ] Gmail and Google Calendar read-only flows pass fixture tests and a permitted
       manual OAuth smoke test.
-- [ ] All external writes are approval-gated and idempotent.
-- [ ] Two-user scope isolation tests pass before enabling multi-user deployment.
-- [ ] Two-instance lease and stale-recovery tests pass.
-- [ ] Restart recovery tests pass.
-- [ ] Redaction tests find no secrets in logs, graph data, prompts, or artifacts.
-- [ ] `go test ./...` passes.
-- [ ] `go test -race ./...` passes.
-- [ ] `go vet ./...` passes.
-- [ ] `gofmt -l .` returns no source files.
-- [ ] AMD64 and ARM64 builds pass.
+- [x] All external writes are approval-gated and idempotent.
+- [x] Two-user scope isolation tests pass before enabling multi-user deployment.
+- [x] Two-instance lease and stale-recovery tests pass.
+- [x] Restart recovery tests pass.
+- [x] Redaction tests find no secrets in logs, graph data, prompts, or artifacts.
+- [x] `go test ./...` passes.
+- [x] `go test -race ./...` passes.
+- [x] `go vet ./...` passes.
+- [x] `gofmt -l $(git ls-files '*.go')` returns no tracked source files.
+- [x] AMD64 and ARM64 builds pass.
 - [ ] Live FalkorDB integration tests pass.
 - [ ] Deployment health/readiness checks pass.
 - [ ] Any unverified provider capability is documented as unavailable rather than

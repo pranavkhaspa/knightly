@@ -72,6 +72,15 @@ func (c *Client) Close() error {
 	return c.db.Conn.Close()
 }
 
+// AddHook installs a go-redis hook on the underlying connection so callers can
+// observe command latency and errors without wrapping every repository.
+func (c *Client) AddHook(hook redis.Hook) {
+	if c == nil || c.db == nil || c.db.Conn == nil || hook == nil {
+		return
+	}
+	c.db.Conn.AddHook(hook)
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -124,14 +133,57 @@ func (c *Client) Status(ctx context.Context) Status {
 // Initialize creates the minimum graph context needed for a meaningful demo.
 // It is idempotent and deliberately stores product state only in FalkorDB.
 func (c *Client) Initialize() error {
+	return c.InitializeFor(context.Background(), identity.Scope{TenantID: "tenant_demo", UserID: demoUserID})
+}
+
+// InitializeFor creates the control-plane mapping and the minimum user graph
+// context for the trusted installation scope. Initialize historically seeded
+// the demo user; keeping it as a wrapper preserves the integration-test and
+// local fixture API while the daemon can now initialize a non-demo installation
+// without writing demo records into the wrong scope.
+func (c *Client) InitializeFor(ctx context.Context, scope identity.Scope) error {
+	if err := scope.Validate(); err != nil {
+		return fmt.Errorf("initialize scope: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c == nil || c.db == nil || c.control == nil {
+		return fmt.Errorf("FalkorDB client is not configured")
+	}
+	graphName := c.userName
+	if scope.TenantID != "tenant_demo" || scope.UserID != demoUserID {
+		graphName = UserGraphName(scope.TenantID, scope.UserID)
+	}
 	updatedAt := time.Now().UTC().UnixMilli()
 	if _, err := c.control.Query(`
 		MERGE (s:Schema {id: "nightshift"})
 		SET s.version = "0.1-foundation", s.updated_at = $updated_at
 		MERGE (mapping:UserGraph {tenant_id: $tenant_id, user_id: $user_id})
 		SET mapping.graph_name = $graph_name, mapping.updated_at = $updated_at
-	`, map[string]interface{}{"tenant_id": "tenant_demo", "user_id": demoUserID, "graph_name": c.userName, "updated_at": updatedAt}, c.options()); err != nil {
+	`, map[string]interface{}{"tenant_id": scope.TenantID, "user_id": scope.UserID, "graph_name": graphName, "updated_at": updatedAt}, c.options()); err != nil {
 		return fmt.Errorf("initialize control graph: %w", err)
+	}
+
+	// Repoint the client before any user-scoped repository is used. The
+	// repositories intentionally retain a pointer to Client, so this keeps the
+	// existing construction API while making the selected graph authoritative.
+	if c.userName != graphName {
+		c.user = c.db.SelectGraph(graphName)
+		c.userName = graphName
+	}
+
+	if scope.TenantID != "tenant_demo" || scope.UserID != demoUserID {
+		if _, err := c.user.Query(`
+			MERGE (u:User {id: $user_id, tenant_id: $tenant_id})
+			ON CREATE SET u.created_at = $updated_at
+			SET u.tenant_id = $tenant_id, u.updated_at = $updated_at
+		`, map[string]interface{}{
+			"user_id": scope.UserID, "tenant_id": scope.TenantID, "updated_at": updatedAt,
+		}, c.options()); err != nil {
+			return fmt.Errorf("initialize user graph: %w", err)
+		}
+		return nil
 	}
 
 	if _, err := c.user.Query(`
@@ -155,8 +207,8 @@ func (c *Client) Initialize() error {
 		    tech.name = "FalkorDB", tech.normalized_name = "falkordb", tech.category = "graph database"
 		MERGE (r)-[:NEEDS]->(tech)
 	`, map[string]interface{}{
-		"user_id":        demoUserID,
-		"tenant_id":      "tenant_demo",
+		"user_id":        scope.UserID,
+		"tenant_id":      scope.TenantID,
 		"display_name":   "Demo Builder",
 		"project_id":     demoProjectID,
 		"project_name":   "NightShift",

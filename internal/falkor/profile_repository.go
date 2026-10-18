@@ -3,7 +3,9 @@ package falkor
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	dbclient "github.com/FalkorDB/falkordb-go/v2"
 	"github.com/pranavkhaspa/knightly/internal/identity"
 	"github.com/pranavkhaspa/knightly/internal/profile"
 )
@@ -47,7 +49,22 @@ func (r *ProfileRepository) Save(ctx context.Context, value profile.Profile) err
 	if err != nil {
 		return fmt.Errorf("save profile in graph: %w", err)
 	}
-	return requireQueryRow(result, "save profile")
+	if err := requireQueryRow(result, "save profile"); err != nil {
+		return err
+	}
+	for _, relationship := range []struct {
+		kind   string
+		values []string
+	}{
+		{kind: "interest", values: value.Interests},
+		{kind: "skill", values: value.Skills},
+		{kind: "technology", values: value.PreferredTechnologies},
+	} {
+		if err := syncProfileRelationship(ctx, graph, value, relationship.kind, relationship.values, r.selector); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *ProfileRepository) Get(ctx context.Context, scope identity.Scope) (profile.Profile, error) {
@@ -99,6 +116,64 @@ func profileParams(value profile.Profile) map[string]interface{} {
 		"created_at":                    optionalMillis(value.CreatedAt),
 		"updated_at":                    optionalMillis(value.UpdatedAt),
 	}
+}
+
+// syncProfileRelationship keeps the bounded User properties for compatibility
+// while materializing the graph relationships used by relevance queries.
+func syncProfileRelationship(ctx context.Context, graph *dbclient.Graph, value profile.Profile, kind string, values []string, selector UserGraphSelector) error {
+	var nodeLabel, relationship string
+	switch kind {
+	case "interest":
+		nodeLabel, relationship = "Interest", "INTERESTED_IN"
+	case "skill":
+		nodeLabel, relationship = "Skill", "HAS_SKILL"
+	case "technology":
+		nodeLabel, relationship = "Technology", "PREFERS"
+	default:
+		return fmt.Errorf("unsupported profile relationship kind %q", kind)
+	}
+	valuesByID := make([]map[string]interface{}, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		name := strings.TrimSpace(raw)
+		normalized := strings.ToLower(strings.Join(strings.Fields(name), " "))
+		if normalized == "" {
+			continue
+		}
+		id := stableID(strings.ToLower(kind), normalized)
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		valuesByID = append(valuesByID, map[string]interface{}{
+			"id": id, "name": name, "normalized_name": normalized,
+		})
+	}
+	query := fmt.Sprintf(`
+		MATCH (u:User {id: $user_id, tenant_id: $tenant_id})
+		OPTIONAL MATCH (u)-[old:%s]->(old_node:%s {tenant_id: $tenant_id, user_id: $user_id})
+		DELETE old
+		WITH u
+		UNWIND $values AS value
+		MERGE (node:%s {id: value.id, tenant_id: $tenant_id, user_id: $user_id})
+		SET node.name = value.name, node.normalized_name = value.normalized_name,
+		    node.updated_at = $updated_at
+		MERGE (u)-[:%s]->(node)
+		RETURN count(node) AS synced
+	`, relationship, nodeLabel, nodeLabel, relationship)
+	result, err := graph.Query(query, map[string]interface{}{
+		"tenant_id": value.TenantID, "user_id": value.UserID,
+		"values": valuesByID, "updated_at": optionalMillis(value.UpdatedAt),
+	}, queryOptionsFor(selector))
+	if err != nil {
+		return fmt.Errorf("sync %s profile relationships: %w", kind, err)
+	}
+	if len(valuesByID) > 0 {
+		if err := requireQueryRow(result, "sync profile relationships"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func profileFromRecord(record recordReader) profile.Profile {

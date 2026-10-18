@@ -92,6 +92,10 @@ type Citation struct {
 	Title   string `json:"title,omitempty"`
 	Source  string `json:"source,omitempty"`
 	Excerpt string `json:"excerpt,omitempty"`
+	// Origin marks the citation as untrusted external content (for example
+	// "web", "mail", "calendar", or "github"). An empty origin means the text
+	// did not come from an external provider.
+	Origin string `json:"origin,omitempty"`
 }
 
 type Conversation struct {

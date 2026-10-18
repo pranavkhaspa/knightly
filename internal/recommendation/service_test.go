@@ -3,6 +3,7 @@ package recommendation
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +12,15 @@ type fakeGraphRepository struct {
 	paths map[string]EvidencePath
 	saved []Recommendation
 	err   error
+}
+
+type signalGraphRepository struct {
+	fakeGraphRepository
+	adjustments map[string]float64
+}
+
+func (f *signalGraphRepository) RankingSignals(_ context.Context, _, _, itemID string) (RankingSignals, error) {
+	return RankingSignals{FeedbackAdjustment: f.adjustments[itemID]}, nil
 }
 
 func (f *fakeGraphRepository) FindRecommendationPath(_ context.Context, _, itemID string) (EvidencePath, error) {
@@ -86,5 +96,31 @@ func TestEvidencePathValidationChecksOrderAndIdentity(t *testing.T) {
 	path.Nodes[3].Label = "Source"
 	if path.ValidFor("project_nightshift", "item_1") {
 		t.Fatal("path with wrong node order accepted")
+	}
+}
+
+func TestRecommendRanksGraphCandidatesWithFeedbackAndRecency(t *testing.T) {
+	now := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC)
+	graph := &signalGraphRepository{
+		fakeGraphRepository: fakeGraphRepository{paths: map[string]EvidencePath{
+			"item_positive": validPath("project_nightshift", "item_positive"),
+			"item_negative": validPath("project_nightshift", "item_negative"),
+		}},
+		adjustments: map[string]float64{"item_positive": 2, "item_negative": -4},
+	}
+	service := NewService(graph)
+	service.Now = func() time.Time { return now }
+	recommendations, err := service.Recommend(context.Background(), "user_demo", "project_nightshift", []Candidate{
+		{ItemID: "item_negative", Title: "Negative", PublishedAt: now},
+		{ItemID: "item_positive", Title: "Positive", PublishedAt: now},
+	})
+	if err != nil {
+		t.Fatalf("Recommend() error = %v", err)
+	}
+	if len(recommendations) != 2 || recommendations[0].ItemID != "item_positive" {
+		t.Fatalf("recommendation order = %#v, want positive feedback first", recommendations)
+	}
+	if !strings.Contains(recommendations[0].Why, "positive feedback adjustment") {
+		t.Fatalf("ranking explanation = %q, want feedback contribution", recommendations[0].Why)
 	}
 }

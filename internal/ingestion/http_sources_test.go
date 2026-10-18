@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRSSSourceParsesBoundedAtomFeed(t *testing.T) {
@@ -158,5 +159,55 @@ func TestRSSSourceHonorsCanceledContext(t *testing.T) {
 	_, err := (RSSSource{Source: SourceConfig{URL: server.URL}}).Fetch(ctx, 1)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Fetch() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestRSSSourceRetriesTemporaryHTTPFailures(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(`<rss><channel><item><guid>retry-ok</guid><link>https://example.com/retry-ok</link><title>Recovered</title></item></channel></rss>`))
+	}))
+	defer server.Close()
+
+	source := RSSSource{
+		Source:       SourceConfig{ID: "retry", URL: server.URL},
+		Client:       server.Client(),
+		MaxRetries:   1,
+		RetryBackoff: time.Millisecond,
+	}
+	items, err := source.Fetch(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if len(items) != 1 || requests.Load() != 2 {
+		t.Fatalf("items=%d requests=%d, want one item after two requests", len(items), requests.Load())
+	}
+}
+
+func TestRSSSourceBoundsRedirects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/next", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/final", http.StatusFound)
+	}))
+	defer server.Close()
+
+	source := RSSSource{
+		Source:       SourceConfig{URL: server.URL + "/start"},
+		Client:       server.Client(),
+		MaxRetries:   -1,
+		MaxRedirects: 1,
+	}
+	_, err := source.Fetch(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "redirect limit") {
+		t.Fatalf("Fetch() error = %v, want bounded redirect error", err)
 	}
 }

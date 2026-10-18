@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -34,16 +35,42 @@ const (
 )
 
 var (
-	ErrInvalidConfig    = errors.New("invalid SearXNG configuration")
-	ErrInvalidRequest   = errors.New("invalid search request")
-	ErrInvalidResponse  = errors.New("invalid SearXNG response")
-	ErrInvalidURL       = errors.New("invalid search URL")
-	ErrHTTPStatus       = errors.New("SearXNG returned non-2xx status")
-	ErrResponseTooLarge = errors.New("SearXNG response exceeds configured limit")
+	ErrInvalidConfig       = errors.New("invalid SearXNG configuration")
+	ErrInvalidRequest      = errors.New("invalid search request")
+	ErrInvalidResponse     = errors.New("invalid SearXNG response")
+	ErrInvalidURL          = errors.New("invalid search URL")
+	ErrHTTPStatus          = errors.New("SearXNG returned non-2xx status")
+	ErrResponseTooLarge    = errors.New("SearXNG response exceeds configured limit")
+	ErrInsecureBaseURL     = errors.New("remote SearXNG base URL must use HTTPS")
+	ErrProviderUnavailable = errors.New("search provider is unavailable")
 )
 
-type Provider interface {
+// SearchProvider is the provider-neutral web-search boundary. Adapters normalize
+// their payloads into SearchResponse and never leak provider-specific types.
+type SearchProvider interface {
 	Search(context.Context, SearchRequest) (SearchResponse, error)
+}
+
+// Provider is retained as a compatibility alias for SearchProvider.
+type Provider = SearchProvider
+
+// HTTPStatusError reports a non-2xx provider response with the status code so
+// a caller can classify retryable failures without parsing the message.
+type HTTPStatusError struct {
+	Code       int
+	RetryAfter time.Duration
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("%s: HTTP %d", ErrHTTPStatus, e.Code)
+}
+
+func (e *HTTPStatusError) Unwrap() error { return ErrHTTPStatus }
+
+// Retryable reports whether the status is a transient provider failure. A 429
+// and 5xx responses are retryable; other 4xx responses are caller errors.
+func (e *HTTPStatusError) Retryable() bool {
+	return e.Code == http.StatusTooManyRequests || e.Code >= 500
 }
 
 type SearchRequest struct {
@@ -79,21 +106,25 @@ type SearXNGConfig struct {
 	Client  *http.Client
 	Timeout time.Duration
 	Limits  Limits
+	// AllowInsecureHTTP permits a plain-http remote instance. It must only be
+	// set for explicit local development; loopback instances are always allowed.
+	AllowInsecureHTTP bool
 }
 
 type SearXNGProvider struct {
-	baseURL *url.URL
-	client  *http.Client
-	timeout time.Duration
-	limits  Limits
+	baseURL           *url.URL
+	client            *http.Client
+	timeout           time.Duration
+	limits            Limits
+	allowInsecureHTTP bool
 }
 
-var _ Provider = (*SearXNGProvider)(nil)
+var _ SearchProvider = (*SearXNGProvider)(nil)
 
 func NewSearXNGProvider(config SearXNGConfig) (*SearXNGProvider, error) {
-	baseURL, err := validateBaseURL(config.BaseURL)
+	baseURL, err := validateBaseURL(config.BaseURL, config.AllowInsecureHTTP)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
 	limits, err := normalizeLimits(config.Limits)
 	if err != nil {
@@ -108,7 +139,7 @@ func NewSearXNGProvider(config SearXNGConfig) (*SearXNGProvider, error) {
 	if config.Client == nil {
 		config.Client = http.DefaultClient
 	}
-	return &SearXNGProvider{baseURL: baseURL, client: config.Client, timeout: config.Timeout, limits: limits}, nil
+	return &SearXNGProvider{baseURL: baseURL, client: config.Client, timeout: config.Timeout, limits: limits, allowInsecureHTTP: config.AllowInsecureHTTP}, nil
 }
 
 func (p *SearXNGProvider) Search(ctx context.Context, request SearchRequest) (SearchResponse, error) {
@@ -143,7 +174,7 @@ func (p *SearXNGProvider) Search(ctx context.Context, request SearchRequest) (Se
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return SearchResponse{}, fmt.Errorf("%w: HTTP %d", ErrHTTPStatus, response.StatusCode)
+		return SearchResponse{}, &HTTPStatusError{Code: response.StatusCode, RetryAfter: parseRetryAfter(response.Header.Get("Retry-After"))}
 	}
 	if err := validateJSONContentType(response.Header.Get("Content-Type")); err != nil {
 		return SearchResponse{}, err
@@ -257,7 +288,7 @@ func normalizeLimits(limits Limits) (Limits, error) {
 	return limits, nil
 }
 
-func validateBaseURL(raw string) (*url.URL, error) {
+func validateBaseURL(raw string, allowInsecureHTTP bool) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.ContainsAny(raw, "\r\n") {
 		return nil, errors.New("base URL is required")
@@ -266,11 +297,40 @@ func validateBaseURL(raw string) (*url.URL, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return nil, errors.New("base URL must be an http(s) origin without user info, query, or fragment")
 	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) && !allowInsecureHTTP {
+		return nil, fmt.Errorf("%w: set NIGHTSHIFT_ENV=development only for a trusted local instance", ErrInsecureBaseURL)
+	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawPath = ""
 	return parsed, nil
 }
 
+// isLoopbackHost reports whether a host literal resolves to the local machine
+// by name or IP, matching the loopback rule used for the HTTP listener.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		delay := time.Until(when)
+		if delay > 0 {
+			return delay
+		}
+	}
+	return 0
+}
 func validateResultURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > MaxResultURL || strings.ContainsAny(raw, "\r\n") {

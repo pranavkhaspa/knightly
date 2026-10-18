@@ -104,6 +104,13 @@ type Candidate struct {
 	Score       float64
 }
 
+// RankingSignals are bounded historical adjustments read from the graph before
+// a recommendation is persisted. Keeping this optional lets deterministic
+// tests and lightweight repositories remain source-compatible.
+type RankingSignals struct {
+	FeedbackAdjustment float64
+}
+
 type Recommendation struct {
 	ID             string       `json:"id"`
 	TenantID       string       `json:"tenant_id,omitempty"`

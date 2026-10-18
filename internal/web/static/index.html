@@ -1137,12 +1137,29 @@
           try {
             if (!state.currentId) await createConversation(prompt.slice(0, 56), false);
             const conversationID = state.currentId;
-            const requestID = createID("browser");
-            const messageID = createID("message");
-            const body = await apiRequest("/api/v1/conversations/" + encodeURIComponent(conversationID) + "/messages", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json", "X-Request-ID": requestID}, body: JSON.stringify({id: messageID, content: prompt})});
+            // Keep the submission identity across a refresh or a network retry.
+            // The server's durable turn is idempotent only when the same key is
+            // reused; generating a fresh request ID here could duplicate agent
+            // work after the first request was accepted but its response was
+            // lost.
+            const pendingStorageKey = "nightshift.pending-turn." + conversationID;
+            let pendingTurn = null;
+            try {
+              const stored = sessionStorage.getItem(pendingStorageKey);
+              if (stored) {
+                const parsed = JSON.parse(stored);
+                if (parsed && parsed.prompt === prompt && parsed.key && parsed.messageID) pendingTurn = parsed;
+              }
+            } catch (_) {}
+            if (!pendingTurn) {
+              pendingTurn = {prompt, key: createID("turn-key"), messageID: createID("message"), turnID: createID("turn")};
+              try { sessionStorage.setItem(pendingStorageKey, JSON.stringify(pendingTurn)); } catch (_) {}
+            }
+            const body = await apiRequest("/api/v1/conversations/" + encodeURIComponent(conversationID) + "/messages", {method: "POST", headers: {"Content-Type": "application/json", Accept: "application/json", "Idempotency-Key": pendingTurn.key, "X-Request-ID": createID("browser")}, body: JSON.stringify({id: pendingTurn.messageID, turn_id: pendingTurn.turnID, idempotency_key: pendingTurn.key, content: prompt})});
             [body.user_message, body.assistant_message].filter(Boolean).forEach((message) => {
               if (!state.messages.some((item) => item.id === message.id)) state.messages.push(message);
             });
+            try { sessionStorage.removeItem(pendingStorageKey); } catch (_) {}
             $("#prompt").value = "";
             renderMessages();
             await refreshConversation();

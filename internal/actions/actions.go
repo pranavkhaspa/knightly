@@ -15,13 +15,17 @@ import (
 type Kind string
 
 const (
-	GitHubIssue Kind = "github_issue"
-	LocalPlan   Kind = "local_plan"
+	GitHubIssue       Kind = "github_issue"
+	GitHubBranch      Kind = "github_branch"
+	GitHubCommit      Kind = "github_commit"
+	GitHubPush        Kind = "github_push"
+	GitHubPullRequest Kind = "github_pull_request"
+	LocalPlan         Kind = "local_plan"
 )
 
 func (k Kind) Valid() bool {
 	switch k {
-	case GitHubIssue, LocalPlan:
+	case GitHubIssue, GitHubBranch, GitHubCommit, GitHubPush, GitHubPullRequest, LocalPlan:
 		return true
 	default:
 		return false

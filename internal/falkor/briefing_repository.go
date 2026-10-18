@@ -78,12 +78,12 @@ func (r *BriefingRepository) saveInboxItem(ctx context.Context, value briefing.B
 	_, err = graph.Query(`
 		MATCH (b:Briefing {id: $briefing_id, tenant_id: $tenant_id, user_id: $user_id})
 		MERGE (i:InboxItem {id: $id, tenant_id: $tenant_id, user_id: $user_id})
-		ON CREATE SET i.created_at = $created_at
+		ON CREATE SET i.created_at = $created_at,
+		              i.state = $state, i.read_at = $read_at, i.archived_at = $archived_at
 		SET i.briefing_id = $briefing_id, i.project_id = $project_id, i.date = $date,
 		    i.provider = $provider, i.provider_item_id = $provider_item_id,
 		    i.kind = $kind, i.title = $title, i.summary = $summary, i.url = $url,
 		    i.content_hash = $content_hash, i.published_at = $published_at,
-		    i.state = $state, i.read_at = $read_at, i.archived_at = $archived_at,
 		    i.updated_at = $updated_at
 		MERGE (b)-[:CREATES]->(i)
 		RETURN i.id AS id

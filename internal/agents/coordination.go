@@ -16,11 +16,12 @@ const (
 	RelevanceAgent AgentType = "relevance"
 	PlannerAgent   AgentType = "planner"
 	MemoryAgent    AgentType = "memory_reviewer"
+	CodingAgent    AgentType = "coding_worker"
 )
 
 func (a AgentType) Valid() bool {
 	switch a {
-	case ScoutAgent, CuratorAgent, RelevanceAgent, PlannerAgent, MemoryAgent:
+	case ScoutAgent, CuratorAgent, RelevanceAgent, PlannerAgent, MemoryAgent, CodingAgent:
 		return true
 	default:
 		return false
@@ -50,34 +51,46 @@ func (s TaskStatus) Valid() bool {
 var (
 	ErrInvalidTask    = errors.New("invalid agent task")
 	ErrTaskNotFound   = errors.New("agent task not found")
+	ErrLeaseLost      = errors.New("agent task lease is no longer owned")
 	ErrInvalidHandoff = errors.New("invalid agent handoff")
+	ErrTaskLeaseHeld  = errors.New("agent task lease is held by another worker")
 )
 
 type Task struct {
-	ID                string     `json:"id"`
-	TenantID          string     `json:"tenant_id"`
-	UserID            string     `json:"user_id"`
-	ProjectID         string     `json:"project_id,omitempty"`
-	SessionID         string     `json:"session_id,omitempty"`
-	Agent             AgentType  `json:"agent"`
-	Status            TaskStatus `json:"status"`
-	Priority          int        `json:"priority"`
-	CorrelationID     string     `json:"correlation_id,omitempty"`
-	InputRefs         []string   `json:"input_refs,omitempty"`
-	OutputRefs        []string   `json:"output_refs,omitempty"`
-	DependencyIDs     []string   `json:"dependency_ids,omitempty"`
-	Phase             string     `json:"phase,omitempty"`
-	Progress          int        `json:"progress"`
-	LeaseOwner        string     `json:"lease_owner,omitempty"`
-	LeaseExpiresAt    time.Time  `json:"lease_expires_at,omitempty"`
-	ConversationID    string     `json:"conversation_id,omitempty"`
-	TurnID            string     `json:"turn_id,omitempty"`
-	Provider          string     `json:"provider,omitempty"`
-	ProviderSessionID string     `json:"provider_session_id,omitempty"`
-	RetryCount        int        `json:"retry_count"`
-	Error             string     `json:"error,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                       string     `json:"id"`
+	TenantID                 string     `json:"tenant_id"`
+	UserID                   string     `json:"user_id"`
+	ProjectID                string     `json:"project_id,omitempty"`
+	SessionID                string     `json:"session_id,omitempty"`
+	Agent                    AgentType  `json:"agent"`
+	Status                   TaskStatus `json:"status"`
+	Priority                 int        `json:"priority"`
+	CorrelationID            string     `json:"correlation_id,omitempty"`
+	InputRefs                []string   `json:"input_refs,omitempty"`
+	OutputRefs               []string   `json:"output_refs,omitempty"`
+	DependencyIDs            []string   `json:"dependency_ids,omitempty"`
+	Phase                    string     `json:"phase,omitempty"`
+	Progress                 int        `json:"progress"`
+	LeaseOwner               string     `json:"lease_owner,omitempty"`
+	LeaseExpiresAt           time.Time  `json:"lease_expires_at,omitempty"`
+	ConversationID           string     `json:"conversation_id,omitempty"`
+	TurnID                   string     `json:"turn_id,omitempty"`
+	Provider                 string     `json:"provider,omitempty"`
+	ProviderSessionID        string     `json:"provider_session_id,omitempty"`
+	ProviderEventCursor      string     `json:"provider_event_cursor,omitempty"`
+	ProviderTerminalObserved bool       `json:"provider_terminal_observed,omitempty"`
+	CodingTitle              string     `json:"coding_title,omitempty"`
+	CodingPrompt             string     `json:"coding_prompt,omitempty"`
+	CodingExternalContext    string     `json:"coding_external_context,omitempty"`
+	RepositoryPath           string     `json:"repository_path,omitempty"`
+	WorkspacePath            string     `json:"workspace_path,omitempty"`
+	BaseSHA                  string     `json:"base_sha,omitempty"`
+	WorkspaceCleanupState    string     `json:"workspace_cleanup_state,omitempty"`
+	RunID                    string     `json:"run_id,omitempty"`
+	RetryCount               int        `json:"retry_count"`
+	Error                    string     `json:"error,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"`
 }
 
 // Handoff is a durable transfer record. The target task is persisted by the
@@ -231,17 +244,18 @@ func (c *Coordinator) Transition(ctx context.Context, task Task, status TaskStat
 	if progress < 0 || progress > 100 {
 		return Task{}, fmt.Errorf("%w: progress must be between 0 and 100", ErrInvalidTask)
 	}
-	if task.Status == Completed || task.Status == Cancelled {
-		if status != task.Status {
-			return Task{}, fmt.Errorf("%w: terminal task cannot transition", ErrInvalidTask)
-		}
+	if task.Status == Completed && status != Completed {
+		return Task{}, fmt.Errorf("%w: completed task cannot transition", ErrInvalidTask)
 	}
-	if status == Pending && task.Status != Failed && task.Status != Cancelled {
-		return Task{}, fmt.Errorf("%w: only failed or cancelled tasks can be retried", ErrInvalidTask)
+	if task.Status == Cancelled && status != Cancelled && status != Pending {
+		return Task{}, fmt.Errorf("%w: cancelled task can only remain cancelled or be explicitly retried", ErrInvalidTask)
+	}
+	if status == Pending && task.Status != Failed && task.Status != Cancelled && task.Status != Blocked {
+		return Task{}, fmt.Errorf("%w: only failed, blocked, or cancelled tasks can be retried", ErrInvalidTask)
 	}
 	previousStatus := task.Status
 	task.Status = status
-	if status == Pending && (previousStatus == Failed || previousStatus == Cancelled) {
+	if status == Pending && (previousStatus == Failed || previousStatus == Cancelled || previousStatus == Blocked) {
 		task.RetryCount++
 	}
 	task.Phase = strings.TrimSpace(phase)

@@ -44,7 +44,10 @@ relationships that make those behaviors possible.
   state.
 - A framework-free dashboard shows the active graph path and persisted task
   status when FalkorDB is available.
-- Deterministic mode is the baseline; an LLM is optional and not yet wired.
+- Deterministic mode is the baseline; SearXNG, read-only Gmail/Calendar, GitHub
+  metadata, reminders, and optional OpenCode coding orchestration are wired
+  behind bounded provider interfaces. Live credentials and provider smoke tests
+  remain deployment-specific.
 
 The next vertical slice is public RSS/GitHub fixture ingestion → graph
 relationships → multi-hop recommendation → evidence path → feedback and
@@ -59,6 +62,10 @@ evolving memory → graph-backed Relevance/Planner handoff.
 The runtime does not require Docker, Node.js, Python, SQLite, Redis, or a local
 LLM. FalkorDB itself exposes the Redis-compatible protocol; it is not being
 used as a generic Redis application database.
+
+## Local Dev2 workspace setup (Windows)
+
+Before enabling OpenCode, configure the local checkout as a trusted repository and place task worktrees outside it. See [`docs/local-workspace-setup.md`](docs/local-workspace-setup.md) and run `scripts/setup-local-workspace.ps1` from PowerShell. A source ZIP does not contain `.git`; use a real clone or initialize and commit a local baseline first. This step configures workspace paths only and does not start or configure OpenCode.
 
 ## Quick start
 
@@ -97,6 +104,12 @@ make build
 ./bin/nightshift
 ```
 
+## OpenCode coding tasks (Dev2)
+
+NightShift can optionally delegate a scoped task to OpenCode. Configure the OpenCode server URL, a workspace root outside the source repositories, an explicit repository allowlist, a trusted server-policy acknowledgement, a project-to-local-repository mapping, and per-project test commands. See [`docs/opencode.md`](docs/opencode.md) before enabling this feature.
+
+With coding configured, a user can type a request such as `Fix the authentication bug` in a NightShift conversation. NightShift stores the request and bounded project/graph context as a durable FalkorDB task. The serial Dev2 queue worker claims the task, creates an isolated Git worktree, starts or resumes OpenCode, streams normalized progress events, and returns a bounded diff plus test results. NightShift persists the artifacts and final status, posts the outcome to chat, and leaves failed tests blocked for review. `review diff` displays the latest coding task's changed files and test output. The direct `POST /api/v1/tasks/{id}/coding` endpoint remains available for an existing task. Read artifacts with `GET /api/v1/tasks/{id}/artifacts/{artifact_id}`. Commits, pushes, pull requests, and deployment are not performed by this workflow.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and export it with your preferred environment
@@ -114,11 +127,19 @@ loader. Important settings:
 | `FALKORDB_GRAPH` | user-owned graph for this installation | `nightshift_u_demo` |
 | `FALKORDB_QUERY_TIMEOUT_MS` | bounded Cypher query timeout | `5000` |
 | `NIGHTSHIFT_DATA_DIR` | local approved-plan artifact directory | `./data` |
+| `NIGHTSHIFT_SEARCH_ALLOW_HTTP` | allow HTTP only for explicitly local SearXNG development | `false` |
 | `NIGHTSHIFT_ACTIONS_ENABLED` | approval-gated local plan execution | `false` |
 | `NIGHTSHIFT_AUTH_TOKEN` | bearer credential for a non-loopback bind | unset |
 | `NIGHTSHIFT_AUTH_USERNAME` / `NIGHTSHIFT_AUTH_PASSWORD` | Basic credential alternative to the token | unset |
 | `NIGHTSHIFT_AUTH_TENANT_ID` / `NIGHTSHIFT_AUTH_USER_ID` | trusted graph scope attached by auth middleware | `tenant_demo` / `user_demo` |
 | `NIGHTSHIFT_AUTH_APPROVER_ID` | trusted actor recorded for approvals | `user_demo` |
+| `NIGHTSHIFT_OIDC_ISSUER` / `NIGHTSHIFT_OIDC_AUDIENCE` / `NIGHTSHIFT_OIDC_JWKS_URL` | verified OIDC bearer identity (optional) | unset |
+| `NIGHTSHIFT_OIDC_TENANT_CLAIM` | token claim mapped to the tenant scope | `tenant` |
+| `NIGHTSHIFT_TRUSTED_PROXY_SECRET` | HMAC secret for signature-verified proxy identity (optional) | unset |
+| `NIGHTSHIFT_LOG_FORMAT` | structured log encoding (`json` or `text`) | `json` |
+| `NIGHTSHIFT_LOG_LEVEL` | `debug`, `info`, `warn`, or `error` | `info` |
+| `NIGHTSHIFT_OTLP_ENDPOINT` | optional non-blocking OTLP/HTTP metrics export endpoint | unset |
+| `NIGHTSHIFT_METRICS_PUBLIC` | expose `GET /metrics` without credentials (trusted scrape network only) | `false` |
 
 Do not put credentials in graph names, URLs returned by the API, logs, source
 fixtures, screenshots, or committed files. The only local artifact written by
@@ -156,14 +177,15 @@ curl -fsS -X POST http://127.0.0.1:8080/api/v1/recommendations/<recommendation-i
 The plan action is `proposed` until the user explicitly approves it. To enable
 the local Markdown executor for a controlled demo, set
 `NIGHTSHIFT_ACTIONS_ENABLED=true`, then call the approval and execute routes.
-GitHub writes are not exposed by the current MVP.
+GitHub publishing is not performed by the current chat coding workflow; any
+external write remains a separate approval-gated action.
 
 ## Checks
 
 Run these from the repository root after installing Go:
 
 ```bash
-gofmt -l .
+gofmt -l $(git ls-files '*.go')
 go test ./...
 go vet ./...
 go build -trimpath -o bin/nightshift ./cmd/nightshift
@@ -243,7 +265,7 @@ the same FalkorDB deployment; scheduler leadership and task leases use the
 graph-backed coordination contract.
 
 The full install, systemd environment file, multiple-instance guidance, and
-portable binary matrix are in `docs/deployment.md`.
+portable binary matrix are in `docs/deployment.md`. For local Windows development, use `scripts/setup-local-workspace.ps1`, configure `.env` using `docs/opencode.md`, start OpenCode in one PowerShell window, and run `scripts/start-nightshift.ps1` in another. The launcher imports non-empty `.env` values while preserving workspace values already set in the current process.
 
 ## Hackathon positioning
 
