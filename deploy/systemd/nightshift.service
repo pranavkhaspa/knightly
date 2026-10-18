@@ -8,6 +8,7 @@ Type=simple
 User=nightshift
 Group=nightshift
 EnvironmentFile=-/etc/nightshift/nightshift.env
+Environment=NIGHTSHIFT_DATA_DIR=/var/lib/nightshift
 UMask=0077
 StateDirectory=nightshift
 StateDirectoryMode=0700

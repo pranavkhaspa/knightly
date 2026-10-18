@@ -129,6 +129,52 @@ func (c *Client) FindRecommendationPath(ctx context.Context, projectID, itemID s
 	return path, nil
 }
 
+// RankingSignals reads only bounded historical feedback for the stable
+// recommendation identity. A missing recommendation simply has no adjustment;
+// callers can still rank the newly graph-qualified candidate deterministically.
+func (c *Client) RankingSignals(ctx context.Context, userID, projectID, itemID string) (recommendation.RankingSignals, error) {
+	if err := ctx.Err(); err != nil {
+		return recommendation.RankingSignals{}, err
+	}
+	if c == nil || c.user == nil {
+		return recommendation.RankingSignals{}, errors.New("FalkorDB user graph is not configured")
+	}
+	result, err := c.user.ROQuery(`
+		MATCH (r:Recommendation {user_id: $user_id, project_id: $project_id, item_id: $item_id})
+		OPTIONAL MATCH (f:Feedback {user_id: $user_id, recommendation_id: r.id})
+		RETURN collect(f.kind) AS kinds
+		LIMIT 1
+	`, map[string]interface{}{"user_id": userID, "project_id": projectID, "item_id": itemID}, c.options())
+	if err != nil {
+		return recommendation.RankingSignals{}, fmt.Errorf("query recommendation feedback: %w", err)
+	}
+	if result == nil || !result.Next() {
+		return recommendation.RankingSignals{}, nil
+	}
+	adjustment := 0.0
+	for _, kind := range stringSliceValue(recordValue(result.Record(), "kinds")) {
+		switch kind {
+		case "useful", "act_now":
+			adjustment += 2
+		case "save_for_later":
+			adjustment += 1
+		case "not_useful":
+			adjustment -= 3
+		case "already_known":
+			adjustment -= 2
+		case "do_not_show_similar":
+			adjustment -= 4
+		}
+	}
+	if adjustment > 2 {
+		adjustment = 2
+	}
+	if adjustment < -4 {
+		adjustment = -4
+	}
+	return recommendation.RankingSignals{FeedbackAdjustment: adjustment}, nil
+}
+
 func (c *Client) SaveRecommendation(ctx context.Context, value recommendation.Recommendation) error {
 	if err := ctx.Err(); err != nil {
 		return err

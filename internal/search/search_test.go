@@ -134,3 +134,12 @@ func TestSearXNGProviderBoundsResponseAndTimeout(t *testing.T) {
 		t.Fatalf("large response error = %v", err)
 	}
 }
+
+func TestSearXNGProviderRejectsRemoteInsecureHTTP(t *testing.T) {
+	if _, err := NewSearXNGProvider(SearXNGConfig{BaseURL: "http://search.example.com"}); err == nil {
+		t.Fatal("remote HTTP SearXNG URL was accepted without an explicit development override")
+	}
+	if _, err := NewSearXNGProvider(SearXNGConfig{BaseURL: "http://search.example.com", AllowInsecureHTTP: true}); err != nil {
+		t.Fatalf("explicit insecure HTTP override rejected: %v", err)
+	}
+}

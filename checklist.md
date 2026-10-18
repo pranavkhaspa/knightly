@@ -435,9 +435,9 @@ instance settings.
 - [x] Restart recovery tests pass.
 - [x] Redaction tests find no secrets in logs, graph data, prompts, or artifacts.
 - [x] `go test ./...` passes.
-- [ ] `go test -race ./...` passes.
+- [x] `go test -race ./...` passes.
 - [x] `go vet ./...` passes.
-- [ ] `gofmt -l .` returns no source files.
+- [x] `gofmt -l $(git ls-files '*.go')` returns no tracked source files.
 - [x] AMD64 and ARM64 builds pass.
 - [ ] Live FalkorDB integration tests pass.
 - [ ] Deployment health/readiness checks pass.
