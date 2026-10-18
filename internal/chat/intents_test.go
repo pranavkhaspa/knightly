@@ -17,6 +17,9 @@ func TestRouteIntentCoversDeterministicDevOneIntents(t *testing.T) {
 		{"why does this matter", IntentWhyDoesThisMatter},
 		{"show my tasks", IntentShowTaskStatus},
 		{"build a demo", IntentBuildDemo},
+		{"Fix the authentication bug", IntentBuildDemo},
+		{"please implement password reset", IntentBuildDemo},
+		{"refactor the session handler", IntentBuildDemo},
 		{"review diff", IntentReviewDiff},
 		{"create a GitHub issue", IntentProposeGitHubAction},
 	}

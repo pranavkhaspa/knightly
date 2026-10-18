@@ -29,6 +29,19 @@ type RoutedIntent struct {
 // RouteIntent intentionally uses deterministic, bounded phrase matching. It
 // is safe to use before an optional model provider is configured and keeps
 // provider policy out of the transport handler.
+func isCodingRequest(lower string) bool {
+	for _, prefix := range []string{
+		"build ", "implement ", "fix ", "repair ", "refactor ", "add ", "update ",
+		"change ", "modify ", "write ", "create ", "debug ", "resolve ",
+		"/build ", "/code ", "please fix ", "please implement ", "please add ", "can you fix ", "can you implement ", "could you fix ", "could you implement ",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "build a demo") || strings.Contains(lower, "fix the ") || strings.Contains(lower, "fix my ")
+}
+
 func RouteIntent(content string) RoutedIntent {
 	trimmed := strings.TrimSpace(content)
 	lower := strings.ToLower(trimmed)
@@ -60,12 +73,12 @@ func RouteIntent(content string) RoutedIntent {
 		return RoutedIntent{Intent: IntentExplainRecommendation, Query: trimmed}
 	case strings.Contains(lower, "task status"), strings.Contains(lower, "show my tasks"), strings.HasPrefix(lower, "tasks"):
 		return RoutedIntent{Intent: IntentShowTaskStatus, Query: trimmed}
-	case strings.HasPrefix(lower, "build "), strings.HasPrefix(lower, "implement "), strings.Contains(lower, "build a demo"), strings.HasPrefix(lower, "/build "):
-		return RoutedIntent{Intent: IntentBuildDemo, Query: trimmed}
 	case strings.Contains(lower, "review diff"), strings.HasPrefix(lower, "review my changes"), strings.HasPrefix(lower, "diff"):
 		return RoutedIntent{Intent: IntentReviewDiff, Query: trimmed}
 	case strings.Contains(lower, "github issue"), strings.Contains(lower, "github action"), strings.Contains(lower, "create a pull request"):
 		return RoutedIntent{Intent: IntentProposeGitHubAction, Query: trimmed}
+	case isCodingRequest(lower):
+		return RoutedIntent{Intent: IntentBuildDemo, Query: trimmed}
 	default:
 		return RoutedIntent{Intent: IntentGeneral, Query: trimmed}
 	}
