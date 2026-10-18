@@ -82,7 +82,7 @@ RETURN run.id AS id
 `
 
 	SourceDeleteQuery = `
-MATCH (source:Source {id: $source_id})
+MATCH (source:Source {id: $source_id, tenant_id: $tenant_id, user_id: $user_id})
 OPTIONAL MATCH (source)-[:HAS_CURSOR|HAS_RUN]->(state)
 DETACH DELETE source, state
 `
@@ -167,7 +167,10 @@ func (r *SourceRepository) DeleteSource(ctx context.Context, sourceID string) er
 	if sourceID == "" {
 		return errors.New("source ID is required")
 	}
-	if _, err := r.client.user.Query(SourceDeleteQuery, map[string]interface{}{"source_id": sourceID}, r.client.options()); err != nil {
+	if err := r.scope.Validate(); err != nil {
+		return fmt.Errorf("source repository scope: %w", err)
+	}
+	if _, err := r.client.user.Query(SourceDeleteQuery, map[string]interface{}{"source_id": sourceID, "tenant_id": r.scope.TenantID, "user_id": r.scope.UserID}, r.client.options()); err != nil {
 		return fmt.Errorf("delete source from graph: %w", err)
 	}
 	return nil

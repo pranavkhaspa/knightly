@@ -1,11 +1,9 @@
 services:
   falkordb:
-    # Keep local/integration behavior reproducible. Update this tag deliberately
-    # and review the graph migration before moving to another FalkorDB release.
     image: falkordb/falkordb:v4.22.1-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:6380:6379"
       - "127.0.0.1:3000:3000"
     volumes:
       - falkordb-data:/data
@@ -47,18 +45,20 @@ services:
       searxng:
         condition: service_healthy
     environment:
-      NIGHTSHIFT_LISTEN: 0.0.0.0:8080
+      NIGHTSHIFT_LISTEN: "0.0.0.0:8080"
       NIGHTSHIFT_ENV: development
       NIGHTSHIFT_INSTANCE_ID: compose-edge
       NIGHTSHIFT_DATA_DIR: /var/lib/nightshift
       FALKORDB_URL: redis://falkordb:6379
       FALKORDB_CONTROL_GRAPH: nightshift_control
       FALKORDB_GRAPH: nightshift_u_demo
-      FALKORDB_QUERY_TIMEOUT_MS: 5000
+      FALKORDB_QUERY_TIMEOUT_MS: "5000"
       # Private SearXNG sidecar (JSON output enabled) for no-card web search.
       NIGHTSHIFT_SEARCH_URL: http://searxng:8080
       NIGHTSHIFT_ACTIONS_ENABLED: "false"
-      NIGHTSHIFT_AUTH_TOKEN: ${NIGHTSHIFT_AUTH_TOKEN:-local-compose-token-change-me}
+      NIGHTSHIFT_AUTH_TOKEN: ${NIGHTSHIFT_AUTH_TOKEN:-}
+      NIGHTSHIFT_AUTH_USERNAME: ${NIGHTSHIFT_AUTH_USERNAME:-}
+      NIGHTSHIFT_AUTH_PASSWORD: ${NIGHTSHIFT_AUTH_PASSWORD:-}
       NIGHTSHIFT_AUTH_TENANT_ID: ${NIGHTSHIFT_AUTH_TENANT_ID:-tenant_demo}
       NIGHTSHIFT_AUTH_USER_ID: ${NIGHTSHIFT_AUTH_USER_ID:-user_demo}
       NIGHTSHIFT_AUTH_APPROVER_ID: ${NIGHTSHIFT_AUTH_APPROVER_ID:-user_demo}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,12 +17,20 @@ import (
 )
 
 const (
-	MaxTitle         = 160
-	MaxMessage       = 32000
-	MaxEventData     = 16000
-	MaxCitationCount = 20
-	DefaultLimit     = 50
-	MaxLimit         = 100
+	MaxTitle           = 160
+	MaxMessage         = 32000
+	MaxEventData       = 16000
+	MaxCitationCount   = 20
+	MaxCitationURL     = 2048
+	MaxCitationTitle   = 512
+	MaxCitationSource  = 128
+	MaxCitationExcerpt = 4096
+	MaxCitationBytes   = 96 * 1024
+	MaxEventFields     = 32
+	MaxEventDataBytes  = 32000
+	MaxReferenceCount  = 20
+	DefaultLimit       = 50
+	MaxLimit           = 100
 )
 
 var (
@@ -69,9 +78,13 @@ const (
 	MessageCreated      EventType = "message.created"
 	TurnStarted         EventType = "turn.started"
 	TurnProgress        EventType = "turn.progress"
+	AssistantDelta      EventType = "assistant.delta"
 	AssistantCompleted  EventType = "assistant.completed"
 	TurnCompleted       EventType = "turn.completed"
 	TurnFailed          EventType = "turn.failed"
+	TurnCancelledEvent  EventType = "turn.cancelled"
+	ToolStarted         EventType = "tool.started"
+	ToolCompleted       EventType = "tool.completed"
 )
 
 type Citation struct {
@@ -108,6 +121,8 @@ type Message struct {
 	Role           Role       `json:"role"`
 	Content        string     `json:"content"`
 	Citations      []Citation `json:"citations,omitempty"`
+	ToolCallIDs    []string   `json:"tool_call_ids,omitempty"`
+	TaskIDs        []string   `json:"task_ids,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
@@ -133,6 +148,14 @@ type Repository interface {
 	ListMessages(context.Context, identity.Scope, string, int) ([]Message, error)
 	AppendEvent(context.Context, Event) (Event, error)
 	ListEvents(context.Context, identity.Scope, string, int64, int) ([]Event, error)
+}
+
+type MessagePageRepository interface {
+	ListMessagesAfter(context.Context, identity.Scope, string, int64, int) ([]Message, error)
+}
+
+type ConversationPageRepository interface {
+	ListConversationsAfter(context.Context, identity.Scope, string, int) ([]Conversation, error)
 }
 
 type Service struct {
@@ -216,6 +239,10 @@ func (s *Service) GetConversation(ctx context.Context, scope identity.Scope, id 
 }
 
 func (s *Service) ListConversations(ctx context.Context, scope identity.Scope, limit int) ([]Conversation, error) {
+	return s.ListConversationsAfter(ctx, scope, "", limit)
+}
+
+func (s *Service) ListConversationsAfter(ctx context.Context, scope identity.Scope, after string, limit int) ([]Conversation, error) {
 	if s == nil || s.repository == nil {
 		return nil, fmt.Errorf("%w: repository is required", ErrInvalidConversation)
 	}
@@ -228,7 +255,22 @@ func (s *Service) ListConversations(ctx context.Context, scope identity.Scope, l
 	if limit < 1 || limit > MaxLimit {
 		return nil, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidConversation, MaxLimit)
 	}
-	values, err := s.repository.ListConversations(ctx, scope, limit)
+	var values []Conversation
+	var err error
+	if paged, ok := s.repository.(ConversationPageRepository); ok {
+		values, err = paged.ListConversationsAfter(ctx, scope, strings.TrimSpace(after), limit)
+	} else {
+		values, err = s.repository.ListConversations(ctx, scope, limit)
+		if after != "" {
+			filtered := values[:0]
+			for _, value := range values {
+				if value.ID < after {
+					filtered = append(filtered, value)
+				}
+			}
+			values = filtered
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
 	}
@@ -264,11 +306,18 @@ func (s *Service) AddMessage(ctx context.Context, scope identity.Scope, value Me
 }
 
 func (s *Service) ListMessages(ctx context.Context, scope identity.Scope, conversationID string, limit int) ([]Message, error) {
+	return s.ListMessagesAfter(ctx, scope, conversationID, 0, limit)
+}
+
+func (s *Service) ListMessagesAfter(ctx context.Context, scope identity.Scope, conversationID string, after int64, limit int) ([]Message, error) {
 	if s == nil || s.repository == nil {
 		return nil, fmt.Errorf("%w: repository is required", ErrInvalidMessage)
 	}
 	if err := validateLookup(scope, conversationID, ErrMessageNotFound); err != nil {
 		return nil, err
+	}
+	if after < 0 {
+		return nil, fmt.Errorf("%w: message cursor cannot be negative", ErrInvalidMessage)
 	}
 	if limit == 0 {
 		limit = DefaultLimit
@@ -276,7 +325,22 @@ func (s *Service) ListMessages(ctx context.Context, scope identity.Scope, conver
 	if limit < 1 || limit > MaxLimit {
 		return nil, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidMessage, MaxLimit)
 	}
-	values, err := s.repository.ListMessages(ctx, scope, conversationID, limit)
+	var values []Message
+	var err error
+	if paged, ok := s.repository.(MessagePageRepository); ok {
+		values, err = paged.ListMessagesAfter(ctx, scope, conversationID, after, limit)
+	} else {
+		values, err = s.repository.ListMessages(ctx, scope, conversationID, limit)
+		if after > 0 {
+			filtered := values[:0]
+			for _, value := range values {
+				if value.Sequence > after {
+					filtered = append(filtered, value)
+				}
+			}
+			values = filtered
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
@@ -376,6 +440,24 @@ func validateMessage(value Message) error {
 	if len(value.Citations) > MaxCitationCount {
 		return fmt.Errorf("%w: too many citations", ErrInvalidMessage)
 	}
+	if len(value.ToolCallIDs) > MaxReferenceCount || len(value.TaskIDs) > MaxReferenceCount {
+		return fmt.Errorf("%w: too many tool or task references", ErrInvalidMessage)
+	}
+	for _, reference := range append(append([]string(nil), value.ToolCallIDs...), value.TaskIDs...) {
+		if err := identity.ValidateID("message reference", reference); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidMessage, err)
+		}
+	}
+	for _, citation := range value.Citations {
+		if strings.TrimSpace(citation.URL) == "" || len([]rune(citation.URL)) > MaxCitationURL ||
+			len([]rune(citation.Title)) > MaxCitationTitle || len([]rune(citation.Source)) > MaxCitationSource ||
+			len([]rune(citation.Excerpt)) > MaxCitationExcerpt {
+			return fmt.Errorf("%w: citation fields are too large or URL is missing", ErrInvalidMessage)
+		}
+	}
+	if encoded, err := json.Marshal(value.Citations); err != nil || len(encoded) > MaxCitationBytes {
+		return fmt.Errorf("%w: citation payload is too large", ErrInvalidMessage)
+	}
 	return nil
 }
 
@@ -396,6 +478,13 @@ func validateEvent(value Event) error {
 	}
 	if value.Type == "" || len([]rune(string(value.Type))) > 80 {
 		return fmt.Errorf("%w: event type is required and bounded", ErrInvalidEvent)
+	}
+	if len(value.Data) > MaxEventFields {
+		return fmt.Errorf("%w: too many event data fields", ErrInvalidEvent)
+	}
+	encoded, err := json.Marshal(value.Data)
+	if err != nil || len(encoded) > MaxEventDataBytes {
+		return fmt.Errorf("%w: event data is too large", ErrInvalidEvent)
 	}
 	for key, item := range value.Data {
 		if len([]rune(key)) > 80 || len([]rune(item)) > MaxEventData {

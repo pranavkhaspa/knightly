@@ -44,6 +44,24 @@ func (r *AgentRepository) SaveTask(ctx context.Context, task agents.Task) error 
 		    t.input_refs = $input_refs,
 		    t.output_refs = $output_refs,
 		    t.dependency_ids = $dependency_ids,
+		    t.phase = $phase,
+		    t.progress = $progress,
+		    t.lease_owner = $lease_owner,
+		    t.lease_expires_at = $lease_expires_at,
+		    t.conversation_id = $conversation_id,
+		    t.turn_id = $turn_id,
+		    t.provider = $provider,
+		    t.provider_session_id = $provider_session_id,
+		    t.provider_event_cursor = $provider_event_cursor,
+		    t.provider_terminal_observed = $provider_terminal_observed,
+		    t.coding_title = $coding_title,
+		    t.coding_prompt = $coding_prompt,
+		    t.coding_external_context = $coding_external_context,
+		    t.repository_path = $repository_path,
+		    t.workspace_path = $workspace_path,
+		    t.base_sha = $base_sha,
+		    t.workspace_cleanup_state = $workspace_cleanup_state,
+		    t.run_id = $run_id,
 		    t.retry_count = $retry_count,
 		    t.error = $error,
 		    t.updated_at = $updated_at
@@ -72,6 +90,12 @@ func (r *AgentRepository) GetTask(ctx context.Context, userID, taskID string) (a
 		       t.priority AS priority, t.correlation_id AS correlation_id,
 		       t.input_refs AS input_refs, t.output_refs AS output_refs,
 		       t.dependency_ids AS dependency_ids, t.retry_count AS retry_count,
+		       t.phase AS phase, t.progress AS progress, t.lease_owner AS lease_owner,
+		       t.lease_expires_at AS lease_expires_at, t.conversation_id AS conversation_id,
+		       t.turn_id AS turn_id, t.provider AS provider, t.provider_session_id AS provider_session_id, t.provider_event_cursor AS provider_event_cursor, t.provider_terminal_observed AS provider_terminal_observed,
+		       t.coding_title AS coding_title, t.coding_prompt AS coding_prompt, t.coding_external_context AS coding_external_context,
+		       t.repository_path AS repository_path, t.workspace_path AS workspace_path, t.base_sha AS base_sha,
+		       t.workspace_cleanup_state AS workspace_cleanup_state, t.run_id AS run_id,
 		       t.error AS error, t.created_at AS created_at, t.updated_at AS updated_at
 		LIMIT 1
 	`, map[string]interface{}{"id": taskID, "user_id": userID}, r.client.options())
@@ -80,6 +104,71 @@ func (r *AgentRepository) GetTask(ctx context.Context, userID, taskID string) (a
 	}
 	if err := requireQueryRow(result, "get task"); err != nil {
 		return agents.Task{}, fmt.Errorf("%w: %s", agents.ErrTaskNotFound, err)
+	}
+	return taskFromRecord(result.Record()), nil
+}
+
+func (r *AgentRepository) ListTasks(ctx context.Context, tenantID, userID, projectID string, limit int) ([]agents.Task, error) {
+	if err := r.ready(ctx); err != nil {
+		return nil, err
+	}
+	result, err := r.client.user.ROQuery(`
+		MATCH (t:Task {tenant_id: $tenant_id, user_id: $user_id})
+		WHERE ($project_id = "" OR t.project_id = $project_id)
+		RETURN t.id AS id, t.tenant_id AS tenant_id, t.user_id AS user_id,
+		       t.project_id AS project_id, t.session_id AS session_id,
+		       t.agent_type AS agent_type, t.status AS status,
+		       t.priority AS priority, t.correlation_id AS correlation_id,
+		       t.input_refs AS input_refs, t.output_refs AS output_refs,
+		       t.dependency_ids AS dependency_ids, t.retry_count AS retry_count,
+		       t.phase AS phase, t.progress AS progress, t.lease_owner AS lease_owner,
+		       t.lease_expires_at AS lease_expires_at, t.conversation_id AS conversation_id,
+		       t.turn_id AS turn_id, t.provider AS provider, t.provider_session_id AS provider_session_id, t.provider_event_cursor AS provider_event_cursor, t.provider_terminal_observed AS provider_terminal_observed,
+		       t.coding_title AS coding_title, t.coding_prompt AS coding_prompt, t.coding_external_context AS coding_external_context,
+		       t.repository_path AS repository_path, t.workspace_path AS workspace_path, t.base_sha AS base_sha,
+		       t.workspace_cleanup_state AS workspace_cleanup_state, t.run_id AS run_id,
+		       t.error AS error, t.created_at AS created_at, t.updated_at AS updated_at
+		ORDER BY coalesce(t.updated_at, 0) DESC, t.id LIMIT $limit
+	`, map[string]interface{}{"tenant_id": tenantID, "user_id": userID, "project_id": projectID, "limit": limit}, r.client.options())
+	if err != nil {
+		return nil, fmt.Errorf("list tasks from graph: %w", err)
+	}
+	values := make([]agents.Task, 0, limit)
+	for result.Next() {
+		values = append(values, taskFromRecord(result.Record()))
+	}
+	return values, nil
+}
+
+func (r *AgentRepository) HeartbeatTask(ctx context.Context, task agents.Task, owner string, until time.Time) (agents.Task, error) {
+	if err := r.ready(ctx); err != nil {
+		return agents.Task{}, err
+	}
+	result, err := r.client.user.Query(`
+		MATCH (t:Task {id: $id, tenant_id: $tenant_id, user_id: $user_id})
+		WHERE t.status <> "completed" AND t.status <> "cancelled" AND (coalesce(t.lease_owner, "") = "" OR t.lease_owner = $lease_owner OR coalesce(t.lease_expires_at, 0) <= $now)
+		SET t.lease_owner = $lease_owner, t.lease_expires_at = $lease_expires_at, t.updated_at = $updated_at
+		RETURN t.id AS id, t.tenant_id AS tenant_id, t.user_id AS user_id,
+		       t.project_id AS project_id, t.session_id AS session_id,
+		       t.agent_type AS agent_type, t.status AS status, t.priority AS priority,
+		       t.correlation_id AS correlation_id, t.input_refs AS input_refs, t.output_refs AS output_refs,
+		       t.dependency_ids AS dependency_ids, t.retry_count AS retry_count,
+		       t.phase AS phase, t.progress AS progress, t.lease_owner AS lease_owner,
+		       t.lease_expires_at AS lease_expires_at, t.conversation_id AS conversation_id,
+		       t.turn_id AS turn_id, t.provider AS provider, t.provider_session_id AS provider_session_id, t.provider_event_cursor AS provider_event_cursor, t.provider_terminal_observed AS provider_terminal_observed,
+		       t.coding_title AS coding_title, t.coding_prompt AS coding_prompt, t.coding_external_context AS coding_external_context,
+		       t.repository_path AS repository_path, t.workspace_path AS workspace_path, t.base_sha AS base_sha,
+		       t.workspace_cleanup_state AS workspace_cleanup_state, t.run_id AS run_id,
+		       t.error AS error, t.created_at AS created_at, t.updated_at AS updated_at
+	`, map[string]interface{}{
+		"id": task.ID, "tenant_id": task.TenantID, "user_id": task.UserID,
+		"lease_owner": owner, "lease_expires_at": until.UTC().UnixMilli(), "updated_at": time.Now().UTC().UnixMilli(), "now": time.Now().UTC().UnixMilli(),
+	}, r.client.options())
+	if err != nil {
+		return agents.Task{}, fmt.Errorf("heartbeat task in graph: %w", err)
+	}
+	if err := requireQueryRow(result, "heartbeat task"); err != nil {
+		return agents.Task{}, fmt.Errorf("%w: task is missing or leased by another worker", agents.ErrTaskLeaseHeld)
 	}
 	return taskFromRecord(result.Record()), nil
 }
@@ -112,6 +201,14 @@ func (r *AgentRepository) PersistHandoff(ctx context.Context, target agents.Task
 		    target.input_refs = $input_refs,
 		    target.output_refs = $output_refs,
 		    target.dependency_ids = $dependency_ids,
+		    target.phase = $phase,
+		    target.progress = $progress,
+		    target.lease_owner = $lease_owner,
+		    target.lease_expires_at = $lease_expires_at,
+		    target.conversation_id = $conversation_id,
+		    target.turn_id = $turn_id,
+		    target.provider = $provider,
+		    target.provider_session_id = $provider_session_id,
 		    target.retry_count = $retry_count,
 		    target.error = $error,
 		    target.updated_at = $updated_at
@@ -188,43 +285,79 @@ func (r *AgentRepository) ready(ctx context.Context) error {
 
 func taskParams(task agents.Task) map[string]interface{} {
 	return map[string]interface{}{
-		"id":             task.ID,
-		"tenant_id":      task.TenantID,
-		"user_id":        task.UserID,
-		"project_id":     task.ProjectID,
-		"session_id":     task.SessionID,
-		"agent_type":     string(task.Agent),
-		"status":         string(task.Status),
-		"priority":       task.Priority,
-		"correlation_id": task.CorrelationID,
-		"input_refs":     task.InputRefs,
-		"output_refs":    task.OutputRefs,
-		"dependency_ids": task.DependencyIDs,
-		"retry_count":    task.RetryCount,
-		"error":          task.Error,
-		"created_at":     optionalMillis(task.CreatedAt),
-		"updated_at":     optionalMillis(task.UpdatedAt),
+		"id":                         task.ID,
+		"tenant_id":                  task.TenantID,
+		"user_id":                    task.UserID,
+		"project_id":                 task.ProjectID,
+		"session_id":                 task.SessionID,
+		"agent_type":                 string(task.Agent),
+		"status":                     string(task.Status),
+		"priority":                   task.Priority,
+		"correlation_id":             task.CorrelationID,
+		"input_refs":                 task.InputRefs,
+		"output_refs":                task.OutputRefs,
+		"dependency_ids":             task.DependencyIDs,
+		"phase":                      task.Phase,
+		"progress":                   task.Progress,
+		"lease_owner":                task.LeaseOwner,
+		"lease_expires_at":           optionalMillis(task.LeaseExpiresAt),
+		"conversation_id":            task.ConversationID,
+		"turn_id":                    task.TurnID,
+		"provider":                   task.Provider,
+		"provider_session_id":        task.ProviderSessionID,
+		"provider_event_cursor":      task.ProviderEventCursor,
+		"provider_terminal_observed": task.ProviderTerminalObserved,
+		"coding_title":               task.CodingTitle,
+		"coding_prompt":              task.CodingPrompt,
+		"coding_external_context":    task.CodingExternalContext,
+		"repository_path":            task.RepositoryPath,
+		"workspace_path":             task.WorkspacePath,
+		"base_sha":                   task.BaseSHA,
+		"workspace_cleanup_state":    task.WorkspaceCleanupState,
+		"run_id":                     task.RunID,
+		"retry_count":                task.RetryCount,
+		"error":                      task.Error,
+		"created_at":                 optionalMillis(task.CreatedAt),
+		"updated_at":                 optionalMillis(task.UpdatedAt),
 	}
 }
 
 func taskFromRecord(record recordReader) agents.Task {
 	return agents.Task{
-		ID:            stringValue(recordField(record, "id")),
-		TenantID:      stringValue(recordField(record, "tenant_id")),
-		UserID:        stringValue(recordField(record, "user_id")),
-		ProjectID:     stringValue(recordField(record, "project_id")),
-		SessionID:     stringValue(recordField(record, "session_id")),
-		Agent:         agents.AgentType(stringValue(recordField(record, "agent_type"))),
-		Status:        agents.TaskStatus(stringValue(recordField(record, "status"))),
-		Priority:      int(recordInt64(recordField(record, "priority"))),
-		CorrelationID: stringValue(recordField(record, "correlation_id")),
-		InputRefs:     stringSliceValue(recordField(record, "input_refs")),
-		OutputRefs:    stringSliceValue(recordField(record, "output_refs")),
-		DependencyIDs: stringSliceValue(recordField(record, "dependency_ids")),
-		RetryCount:    int(recordInt64(recordField(record, "retry_count"))),
-		Error:         stringValue(recordField(record, "error")),
-		CreatedAt:     timeValue(recordField(record, "created_at")),
-		UpdatedAt:     timeValue(recordField(record, "updated_at")),
+		ID:                       stringValue(recordField(record, "id")),
+		TenantID:                 stringValue(recordField(record, "tenant_id")),
+		UserID:                   stringValue(recordField(record, "user_id")),
+		ProjectID:                stringValue(recordField(record, "project_id")),
+		SessionID:                stringValue(recordField(record, "session_id")),
+		Agent:                    agents.AgentType(stringValue(recordField(record, "agent_type"))),
+		Status:                   agents.TaskStatus(stringValue(recordField(record, "status"))),
+		Priority:                 int(recordInt64(recordField(record, "priority"))),
+		CorrelationID:            stringValue(recordField(record, "correlation_id")),
+		InputRefs:                stringSliceValue(recordField(record, "input_refs")),
+		OutputRefs:               stringSliceValue(recordField(record, "output_refs")),
+		DependencyIDs:            stringSliceValue(recordField(record, "dependency_ids")),
+		Phase:                    stringValue(recordField(record, "phase")),
+		Progress:                 int(recordInt64(recordField(record, "progress"))),
+		LeaseOwner:               stringValue(recordField(record, "lease_owner")),
+		LeaseExpiresAt:           timeValue(recordField(record, "lease_expires_at")),
+		ConversationID:           stringValue(recordField(record, "conversation_id")),
+		TurnID:                   stringValue(recordField(record, "turn_id")),
+		Provider:                 stringValue(recordField(record, "provider")),
+		ProviderSessionID:        stringValue(recordField(record, "provider_session_id")),
+		ProviderEventCursor:      stringValue(recordField(record, "provider_event_cursor")),
+		ProviderTerminalObserved: boolValue(recordField(record, "provider_terminal_observed")),
+		CodingTitle:              stringValue(recordField(record, "coding_title")),
+		CodingPrompt:             stringValue(recordField(record, "coding_prompt")),
+		CodingExternalContext:    stringValue(recordField(record, "coding_external_context")),
+		RepositoryPath:           stringValue(recordField(record, "repository_path")),
+		WorkspacePath:            stringValue(recordField(record, "workspace_path")),
+		BaseSHA:                  stringValue(recordField(record, "base_sha")),
+		WorkspaceCleanupState:    stringValue(recordField(record, "workspace_cleanup_state")),
+		RunID:                    stringValue(recordField(record, "run_id")),
+		RetryCount:               int(recordInt64(recordField(record, "retry_count"))),
+		Error:                    stringValue(recordField(record, "error")),
+		CreatedAt:                timeValue(recordField(record, "created_at")),
+		UpdatedAt:                timeValue(recordField(record, "updated_at")),
 	}
 }
 

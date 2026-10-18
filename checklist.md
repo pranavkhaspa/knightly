@@ -1,6 +1,6 @@
 # NightShift production implementation checklist
 
-Status: implementation plan committed before product changes
+Status: implementation in progress; completed items are checked below
 
 ## Locked product decisions
 
@@ -48,15 +48,15 @@ Status: implementation plan committed before product changes
       timestamps.
 - [x] Add ordered `Message` records with role, bounded content, citations, and
       tool/task references.
-- [ ] Add `Turn` records with idempotency key, status, and terminal result.
+- [x] Add `Turn` records with idempotency key, status, and terminal result.
 - [x] Add ordered `Event` records with a per-stream sequence number.
-- [ ] Add `Run`/`AgentRun` records with provider and provider-session metadata.
-- [ ] Extend tasks with phase, progress, retry, lease, conversation, turn, provider,
+- [x] Add `Run`/`AgentRun` records with provider and provider-session metadata.
+- [x] Extend tasks with phase, progress, retry, lease, conversation, turn, provider,
       and provider-session fields.
-- [ ] Add bounded `Artifact` records for diffs, test results, reports, and links.
+- [ ] Add bounded `Artifact` records for diffs, test results, reports, and links (coding diff/test-result artifacts are implemented; report/link artifact types remain).
 - [ ] Add `Briefing` and `InboxItem` records with read/archive state.
 - [ ] Add `ProviderAccount` metadata without storing OAuth tokens in FalkorDB.
-- [ ] Add `Workspace` records with repository, base SHA, branch, and cleanup state.
+- [ ] Add `Workspace` records with repository, base SHA, branch, and cleanup state (workspace records are implemented; target-branch selection/publishing remains).
 - [ ] Add approval/action records for every external write.
 
 Required relationships:
@@ -139,20 +139,20 @@ and bounded data.
 - [x] `PATCH /api/v1/conversations/{id}`
 - [x] `GET /api/v1/conversations/{id}/messages`
 - [x] `POST /api/v1/conversations/{id}/messages`
-- [ ] `POST /api/v1/conversations/{id}/cancel`
+- [x] `POST /api/v1/conversations/{id}/cancel`
 - [x] `GET /api/v1/conversations/{id}/events`
-- [ ] Use trusted request scope rather than client-supplied tenant/user IDs.
-- [ ] Enforce bounded message size and pagination.
-- [ ] Persist user, assistant, system, tool, and progress messages distinctly.
+- [x] Use trusted request scope rather than client-supplied tenant/user IDs.
+- [x] Enforce bounded message size and pagination.
+- [x] Persist user, assistant, system, tool, and progress messages distinctly.
 
 ### Chat execution
 
-- [ ] Add an `internal/chat` service with deterministic intent routing.
-- [ ] Retrieve bounded conversation, project, memory, decision, and graph context.
-- [ ] Invoke only typed application tools.
-- [ ] Persist citations, tool calls, task references, and assistant output.
-- [ ] Support idempotent retry of a turn.
-- [ ] Support cancellation without losing terminal state.
+- [x] Add an `internal/chat` service with deterministic intent routing.
+- [x] Retrieve bounded conversation, project, memory, decision, and graph context.
+- [x] Invoke only typed application tools.
+- [x] Persist citations, tool calls, task references, and assistant output.
+- [x] Support idempotent retry of a turn.
+- [x] Support cancellation without losing terminal state.
 
 Initial intents:
 
@@ -174,36 +174,36 @@ propose_github_action
 
 ### Streaming and task state
 
-- [ ] Add SSE with heartbeats and bounded write/idle behavior.
-- [ ] Support reconnect with `Last-Event-ID`.
-- [ ] Prevent browser refresh from duplicating agent work.
-- [ ] Add task list/detail/progress/retry/cancel endpoints.
-- [ ] Add task lease heartbeat and stale recovery.
-- [ ] Emit an event for every task transition.
-- [ ] Keep transitions explicit: pending, running, blocked, completed, failed,
+- [x] Add SSE with heartbeats and bounded write/idle behavior.
+- [x] Support reconnect with `Last-Event-ID`.
+- [x] Prevent browser refresh from duplicating agent work.
+- [x] Add task list/detail/progress/retry/cancel endpoints.
+- [x] Add task lease heartbeat and stale recovery.
+- [x] Emit an event for every task transition.
+- [x] Keep transitions explicit: pending, running, blocked, completed, failed,
       and cancelled.
 
 ### Briefing and inbox
 
-- [ ] Create an idempotent daily briefing per user/project/date.
-- [ ] Include graph recommendations, source evidence, web results, mail, calendar,
+- [x] Create an idempotent daily briefing per user/project/date.
+- [x] Include graph recommendations, source evidence, web results, mail, calendar,
       GitHub, reminders, unresolved tasks, and pending approvals.
-- [ ] Show partial-provider failures instead of hiding them.
-- [ ] Add `GET /api/v1/briefings`, detail, manual run, and read endpoints.
-- [ ] Add inbox list/detail/read/archive endpoints.
-- [ ] Deliver reports to chat and inbox.
-- [ ] Respect timezone and quiet hours.
+- [x] Show partial-provider failures instead of hiding them.
+- [x] Add `GET /api/v1/briefings`, detail, manual run, and read endpoints.
+- [x] Add inbox list/detail/read/archive endpoints.
+- [x] Deliver reports to chat and inbox.
+- [x] Respect timezone and quiet hours.
 
 ### Frontend
 
 - [x] Replace the dashboard landing page with a chat-first layout.
-- [ ] Add conversation sidebar and new-conversation flow.
-- [ ] Add streamed assistant output and progress cards.
-- [ ] Add citations, source detail, and FalkorDB graph-path drawer.
-- [ ] Add task progress, diff, test result, and approval cards.
-- [ ] Add morning report, inbox, search, calendar, reminder, and health panels.
-- [ ] Add reconnect/error/empty states and mobile layout.
-- [ ] Keep the deployed frontend static and embedded; do not require Node.js at
+- [x] Add conversation sidebar and new-conversation flow.
+- [x] Add streamed assistant output and progress cards.
+- [x] Add citations, source detail, and FalkorDB graph-path drawer.
+- [x] Add task progress, diff, test result, and approval cards.
+- [x] Add morning report, inbox, search, calendar, reminder, and health panels.
+- [x] Add reconnect/error/empty states and mobile layout.
+- [x] Keep the deployed frontend static and embedded; do not require Node.js at
       runtime.
 
 ## Approval policy
@@ -238,18 +238,19 @@ type AgentAdapter interface {
 }
 ```
 
-- [ ] Normalize provider output into the shared event contract.
-- [ ] Add deadlines, output limits, cancellation, and process supervision.
-- [ ] Persist provider session/run IDs in FalkorDB.
+- [x] Normalize provider output into the shared event contract (bounded event fields; raw provider payloads are not forwarded).
+- [x] Add run deadlines, bounded provider events/output, cancellation, and shutdown interruption (external process supervision is not applicable to the HTTP provider).
+- [x] Persist provider session/run IDs in FalkorDB.
 - [ ] Make start, resume, cancel, diff, and tests idempotent where possible.
 
 ### Workspace safety
 
-- [ ] Create a dedicated Git worktree or temporary workspace per coding task.
-- [ ] Record repository, base commit SHA, target branch, provider, and workspace.
+- [x] Create a dedicated Git worktree or temporary workspace per coding task.
+- [x] Record repository, base commit SHA, provider, and workspace in FalkorDB.
+- [ ] Add target-branch selection and approval-gated publishing.
 - [ ] Prevent concurrent mutation of a shared checkout.
 - [ ] Restrict reads/edits/shell commands to the configured workspace.
-- [ ] Capture bounded diffs and test output before cleanup.
+- [x] Capture bounded diffs and test output as graph-backed artifacts before cleanup.
 - [ ] Clean up only after durable completion/failure state is written.
 
 ### OpenCode adapter
@@ -258,18 +259,18 @@ Use the current OpenCode HTTP API/server mode rather than scraping terminal outp
 The verified API surface includes sessions, prompts, events, interruption, diffs,
 worktrees, VCS status/diff, permissions, and web search.
 
-- [ ] Discover/configure the OpenCode server endpoint.
+- [x] Discover/configure the OpenCode server endpoint through deployment configuration; live endpoint smoke test remains.
 - [ ] Create a session with the bounded task workspace and explicit permissions.
-- [ ] Send the task prompt with NightShift context and untrusted-content markers.
-- [ ] Subscribe to server events and normalize progress/output.
-- [ ] Support interruption and durable resume.
-- [ ] Retrieve diff and test results.
-- [ ] Capture artifacts and provider metadata.
+- [x] Send the task prompt with bounded external context JSON-encoded and marked as untrusted data.
+- [x] Subscribe to the OpenCode durable session event log and normalize bounded progress events.
+- [x] Support interruption and session resume; automatic startup recovery orchestration remains.
+- [x] Retrieve diffs and run configured, allowlisted test commands in the workspace.
+- [x] Capture graph-backed diff/test artifacts and provider/run metadata.
 - [ ] Configure OpenCode permissions so read/edit/shell access is limited to the
       worktree, shell is allowlisted or approval-gated, and pushes are denied by
       default.
 - [ ] Do not allow a provider prompt or external file to change NightShift policy.
-- [ ] Add conformance tests against a fake OpenCode HTTP server.
+- [x] Add conformance tests against a fake OpenCode HTTP server.
 - [ ] Add an opt-in test against a real local OpenCode server when available.
 
 ### Coding workflow
@@ -286,9 +287,10 @@ user requests build
 → provider and GitHub result are persisted
 ```
 
-- [ ] Verify repository allowlist and target branch.
+- [x] Verify the configured repository allowlist and project-to-repository mapping.
+- [ ] Add target-branch selection and approval-gated publishing.
 - [ ] Verify base SHA before starting and before publishing.
-- [ ] Require passing tests or show an explicit failed-test approval state.
+- [x] Require test results; failed tests leave the task blocked for review.
 - [ ] Use least-privilege GitHub credentials.
 - [ ] Verify commit/PR results after an uncertain response.
 
@@ -404,9 +406,10 @@ instance settings.
 
 ### Coding task
 
-- [ ] Ask NightShift to build a bounded demo.
-- [ ] Show OpenCode progress in chat.
-- [ ] Show isolated workspace, diff, and test output.
+- [x] Route a chat coding request into a durable coding task and serial worker queue.
+- [x] Show OpenCode progress and final status in chat events/messages.
+- [x] Persist isolated workspace metadata, diff, and test output.
+- [ ] Verify the full chat-to-FalkorDB-to-OpenCode flow against live FalkorDB and a real OpenCode server.
 - [ ] Require approval before commit/push/PR.
 - [ ] Verify the resulting GitHub object and persist its link/SHA.
 - [ ] Confirm retries do not duplicate the external action.

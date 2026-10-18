@@ -16,11 +16,12 @@ const (
 	RelevanceAgent AgentType = "relevance"
 	PlannerAgent   AgentType = "planner"
 	MemoryAgent    AgentType = "memory_reviewer"
+	CodingAgent    AgentType = "coding_worker"
 )
 
 func (a AgentType) Valid() bool {
 	switch a {
-	case ScoutAgent, CuratorAgent, RelevanceAgent, PlannerAgent, MemoryAgent:
+	case ScoutAgent, CuratorAgent, RelevanceAgent, PlannerAgent, MemoryAgent, CodingAgent:
 		return true
 	default:
 		return false
@@ -51,25 +52,44 @@ var (
 	ErrInvalidTask    = errors.New("invalid agent task")
 	ErrTaskNotFound   = errors.New("agent task not found")
 	ErrInvalidHandoff = errors.New("invalid agent handoff")
+	ErrTaskLeaseHeld  = errors.New("agent task lease is held by another worker")
 )
 
 type Task struct {
-	ID            string     `json:"id"`
-	TenantID      string     `json:"tenant_id"`
-	UserID        string     `json:"user_id"`
-	ProjectID     string     `json:"project_id,omitempty"`
-	SessionID     string     `json:"session_id,omitempty"`
-	Agent         AgentType  `json:"agent"`
-	Status        TaskStatus `json:"status"`
-	Priority      int        `json:"priority"`
-	CorrelationID string     `json:"correlation_id,omitempty"`
-	InputRefs     []string   `json:"input_refs,omitempty"`
-	OutputRefs    []string   `json:"output_refs,omitempty"`
-	DependencyIDs []string   `json:"dependency_ids,omitempty"`
-	RetryCount    int        `json:"retry_count"`
-	Error         string     `json:"error,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID                       string     `json:"id"`
+	TenantID                 string     `json:"tenant_id"`
+	UserID                   string     `json:"user_id"`
+	ProjectID                string     `json:"project_id,omitempty"`
+	SessionID                string     `json:"session_id,omitempty"`
+	Agent                    AgentType  `json:"agent"`
+	Status                   TaskStatus `json:"status"`
+	Priority                 int        `json:"priority"`
+	CorrelationID            string     `json:"correlation_id,omitempty"`
+	InputRefs                []string   `json:"input_refs,omitempty"`
+	OutputRefs               []string   `json:"output_refs,omitempty"`
+	DependencyIDs            []string   `json:"dependency_ids,omitempty"`
+	Phase                    string     `json:"phase,omitempty"`
+	Progress                 int        `json:"progress"`
+	LeaseOwner               string     `json:"lease_owner,omitempty"`
+	LeaseExpiresAt           time.Time  `json:"lease_expires_at,omitempty"`
+	ConversationID           string     `json:"conversation_id,omitempty"`
+	TurnID                   string     `json:"turn_id,omitempty"`
+	Provider                 string     `json:"provider,omitempty"`
+	ProviderSessionID        string     `json:"provider_session_id,omitempty"`
+	ProviderEventCursor      string     `json:"provider_event_cursor,omitempty"`
+	ProviderTerminalObserved bool       `json:"provider_terminal_observed,omitempty"`
+	CodingTitle              string     `json:"coding_title,omitempty"`
+	CodingPrompt             string     `json:"coding_prompt,omitempty"`
+	CodingExternalContext    string     `json:"coding_external_context,omitempty"`
+	RepositoryPath           string     `json:"repository_path,omitempty"`
+	WorkspacePath            string     `json:"workspace_path,omitempty"`
+	BaseSHA                  string     `json:"base_sha,omitempty"`
+	WorkspaceCleanupState    string     `json:"workspace_cleanup_state,omitempty"`
+	RunID                    string     `json:"run_id,omitempty"`
+	RetryCount               int        `json:"retry_count"`
+	Error                    string     `json:"error,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"`
 }
 
 // Handoff is a durable transfer record. The target task is persisted by the
@@ -106,6 +126,16 @@ type Repository interface {
 	SaveTask(context.Context, Task) error
 	GetTask(context.Context, string, string) (Task, error)
 	PersistHandoff(context.Context, Task, Handoff) error
+}
+
+// TaskListRepository and TaskControlRepository are optional capabilities so
+// existing lightweight coordination repositories remain source-compatible.
+type TaskListRepository interface {
+	ListTasks(context.Context, string, string, string, int) ([]Task, error)
+}
+
+type TaskControlRepository interface {
+	HeartbeatTask(context.Context, Task, string, time.Time) (Task, error)
 }
 
 // StaleRecoveryRepository is optional so lightweight test repositories do not
@@ -156,6 +186,112 @@ func (c *Coordinator) GetTask(ctx context.Context, userID, taskID string) (Task,
 	task, err := c.repository.GetTask(ctx, userID, taskID)
 	if err != nil {
 		return Task{}, fmt.Errorf("get task %q: %w", taskID, err)
+	}
+	return cloneTask(task), nil
+}
+
+func (c *Coordinator) GetTaskForScope(ctx context.Context, scopeTenant, scopeUser, taskID string) (Task, error) {
+	task, err := c.GetTask(ctx, scopeUser, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.TenantID != scopeTenant || task.UserID != scopeUser {
+		return Task{}, fmt.Errorf("%w: task is outside the requested scope", ErrTaskNotFound)
+	}
+	return task, nil
+}
+
+func (c *Coordinator) ListTasks(ctx context.Context, tenantID, userID, projectID string, limit int) ([]Task, error) {
+	if c == nil || c.repository == nil {
+		return nil, fmt.Errorf("%w: repository is required", ErrInvalidTask)
+	}
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
+		return nil, fmt.Errorf("%w: tenant and user IDs are required", ErrInvalidTask)
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		return nil, fmt.Errorf("%w: limit cannot exceed 100", ErrInvalidTask)
+	}
+	repository, ok := c.repository.(TaskListRepository)
+	if !ok {
+		return nil, fmt.Errorf("%w: task listing is not supported", ErrInvalidTask)
+	}
+	values, err := repository.ListTasks(ctx, tenantID, userID, projectID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	for index := range values {
+		if err := validateTask(values[index]); err != nil {
+			return nil, err
+		}
+		if values[index].TenantID != tenantID || values[index].UserID != userID {
+			return nil, fmt.Errorf("%w: repository returned a task outside the requested scope", ErrInvalidTask)
+		}
+	}
+	return values, nil
+}
+
+func (c *Coordinator) Transition(ctx context.Context, task Task, status TaskStatus, phase string, progress int, failure string) (Task, error) {
+	if c == nil || c.repository == nil {
+		return Task{}, fmt.Errorf("%w: repository is required", ErrInvalidTask)
+	}
+	if !status.Valid() {
+		return Task{}, fmt.Errorf("%w: unknown status %q", ErrInvalidTask, status)
+	}
+	if progress < 0 || progress > 100 {
+		return Task{}, fmt.Errorf("%w: progress must be between 0 and 100", ErrInvalidTask)
+	}
+	if task.Status == Completed && status != Completed {
+		return Task{}, fmt.Errorf("%w: completed task cannot transition", ErrInvalidTask)
+	}
+	if task.Status == Cancelled && status != Cancelled && status != Pending {
+		return Task{}, fmt.Errorf("%w: cancelled task can only remain cancelled or be explicitly retried", ErrInvalidTask)
+	}
+	if status == Pending && task.Status != Failed && task.Status != Cancelled && task.Status != Blocked {
+		return Task{}, fmt.Errorf("%w: only failed, blocked, or cancelled tasks can be retried", ErrInvalidTask)
+	}
+	previousStatus := task.Status
+	task.Status = status
+	if status == Pending && (previousStatus == Failed || previousStatus == Cancelled || previousStatus == Blocked) {
+		task.RetryCount++
+	}
+	task.Phase = strings.TrimSpace(phase)
+	task.Progress = progress
+	task.Error = strings.TrimSpace(failure)
+	task.UpdatedAt = c.now().UTC()
+	if status == Completed {
+		task.Progress = 100
+	}
+	if err := validateTask(task); err != nil {
+		return Task{}, err
+	}
+	if err := c.repository.SaveTask(ctx, task); err != nil {
+		return Task{}, fmt.Errorf("transition task: %w", err)
+	}
+	return cloneTask(task), nil
+}
+
+func (c *Coordinator) Heartbeat(ctx context.Context, task Task, owner string, until time.Time) (Task, error) {
+	if c == nil || c.repository == nil {
+		return Task{}, fmt.Errorf("%w: repository is required", ErrInvalidTask)
+	}
+	owner = strings.TrimSpace(owner)
+	if owner == "" || until.IsZero() {
+		return Task{}, fmt.Errorf("%w: lease owner and expiry are required", ErrInvalidTask)
+	}
+	if task.Status != Running {
+		return Task{}, fmt.Errorf("%w: only running tasks can renew a lease", ErrInvalidTask)
+	}
+	if heartbeat, ok := c.repository.(TaskControlRepository); ok {
+		return heartbeat.HeartbeatTask(ctx, task, owner, until)
+	}
+	task.LeaseOwner = owner
+	task.LeaseExpiresAt = until.UTC()
+	task.UpdatedAt = c.now().UTC()
+	if err := c.repository.SaveTask(ctx, task); err != nil {
+		return Task{}, fmt.Errorf("heartbeat task: %w", err)
 	}
 	return cloneTask(task), nil
 }
@@ -250,6 +386,12 @@ func validateTask(task Task) error {
 	}
 	if task.Priority < 0 {
 		return fmt.Errorf("%w: priority cannot be negative", ErrInvalidTask)
+	}
+	if task.Progress < 0 || task.Progress > 100 {
+		return fmt.Errorf("%w: progress must be between 0 and 100", ErrInvalidTask)
+	}
+	if len([]rune(task.Error)) > 2000 {
+		return fmt.Errorf("%w: error is too large", ErrInvalidTask)
 	}
 	return nil
 }
