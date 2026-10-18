@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+
+/bin/
+/dist/
+/nightshift
+/nightshift-*
+/data/
+.worktrees/
+
+*.log
+*.tmp
+*.swp
+
+.DS_Store
+
+# Local FalkorDB data when running the development stack.
+deploy/docker/data/
