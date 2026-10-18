@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -15,15 +16,21 @@ import (
 const (
 	defaultHTTPBodyLimit = 2 << 20
 	defaultUserAgent     = "NightShift/0.1 (+https://github.com/pranavkhaspa/knightly)"
+	defaultHTTPRetries   = 2
+	defaultRetryBackoff  = time.Second
+	defaultRedirectLimit = 3
 )
 
 // RSSSource is a bounded RSS/Atom adapter. It returns structured records and
 // never hands raw response bodies to the rest of the application.
 type RSSSource struct {
-	Source    SourceConfig
-	Client    *http.Client
-	BodyLimit int64
-	UserAgent string
+	Source       SourceConfig
+	Client       *http.Client
+	BodyLimit    int64
+	UserAgent    string
+	MaxRetries   int
+	RetryBackoff time.Duration
+	MaxRedirects int
 }
 
 var _ SourceAdapter = RSSSource{}
@@ -94,66 +101,192 @@ func (s RSSSource) fetch(ctx context.Context, cursor SourceCursor, contentTypes 
 	if client == nil {
 		client = http.DefaultClient
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Source.URL, nil)
-	if err != nil {
-		return nil, cursor, false, err
-	}
+	client = boundedRedirectClient(client, s.MaxRedirects)
 	userAgent := s.UserAgent
 	if userAgent == "" {
 		userAgent = defaultUserAgent
 	}
-	request.Header.Set("User-Agent", userAgent)
-	if cursor.ETag != "" {
-		request.Header.Set("If-None-Match", cursor.ETag)
+	retries := s.MaxRetries
+	if retries == 0 {
+		retries = defaultHTTPRetries
 	}
-	if cursor.LastModified != "" {
-		request.Header.Set("If-Modified-Since", cursor.LastModified)
+	if retries < 0 {
+		retries = 0
 	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, cursor, false, err
+	if retries > 3 {
+		retries = 3
 	}
-	defer response.Body.Close()
-	nextCursor := cursor
-	nextCursor.SourceID = s.Source.ID
-	if value := response.Header.Get("ETag"); value != "" {
-		nextCursor.ETag = value
+	backoff := s.RetryBackoff
+	if backoff <= 0 {
+		backoff = defaultRetryBackoff
 	}
-	if value := response.Header.Get("Last-Modified"); value != "" {
-		nextCursor.LastModified = value
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, cursor, false, err
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.Source.URL, nil)
+		if err != nil {
+			return nil, cursor, false, err
+		}
+		request.Header.Set("User-Agent", userAgent)
+		if cursor.ETag != "" {
+			request.Header.Set("If-None-Match", cursor.ETag)
+		}
+		if cursor.LastModified != "" {
+			request.Header.Set("If-Modified-Since", cursor.LastModified)
+		}
+		response, requestErr := client.Do(request)
+		if requestErr != nil {
+			if errors.Is(requestErr, context.Canceled) || errors.Is(requestErr, context.DeadlineExceeded) {
+				return nil, cursor, false, requestErr
+			}
+			lastErr = requestErr
+			if attempt < retries {
+				if err := waitRetry(ctx, retryDelay(backoff, attempt, "")); err != nil {
+					return nil, cursor, false, err
+				}
+				continue
+			}
+			return nil, cursor, false, lastErr
+		}
+		nextCursor := cursor
+		nextCursor.SourceID = s.Source.ID
+		if value := response.Header.Get("ETag"); value != "" {
+			nextCursor.ETag = value
+		}
+		if value := response.Header.Get("Last-Modified"); value != "" {
+			nextCursor.LastModified = value
+		}
+		if response.StatusCode == http.StatusNotModified {
+			response.Body.Close()
+			return nil, nextCursor, true, nil
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			status := response.StatusCode
+			retryAfter := response.Header.Get("Retry-After")
+			response.Body.Close()
+			lastErr = fmt.Errorf("source returned HTTP %d", status)
+			if attempt < retries && retryableHTTPStatus(status) {
+				if err := waitRetry(ctx, retryDelay(backoff, attempt, retryAfter)); err != nil {
+					return nil, nextCursor, false, err
+				}
+				cursor = nextCursor
+				continue
+			}
+			return nil, nextCursor, false, lastErr
+		}
+		mediaType, _, contentTypeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		if contentTypeErr != nil || !allowedContentType(mediaType, contentTypes) {
+			response.Body.Close()
+			return nil, nextCursor, false, fmt.Errorf("unsupported source content type %q", response.Header.Get("Content-Type"))
+		}
+		limit := s.BodyLimit
+		if limit <= 0 || limit > defaultHTTPBodyLimit {
+			limit = defaultHTTPBodyLimit
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
+		response.Body.Close()
+		if readErr != nil {
+			return nil, nextCursor, false, readErr
+		}
+		if int64(len(body)) > limit {
+			return nil, nextCursor, false, fmt.Errorf("source response exceeds %d bytes", limit)
+		}
+		return body, nextCursor, false, nil
 	}
-	if response.StatusCode == http.StatusNotModified {
-		return nil, nextCursor, true, nil
+	return nil, cursor, false, lastErr
+}
+
+func boundedRedirectClient(client *http.Client, configured int) *http.Client {
+	clone := *client
+	limit := configured
+	if limit <= 0 || limit > 10 {
+		limit = defaultRedirectLimit
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, nextCursor, false, fmt.Errorf("source returned HTTP %d", response.StatusCode)
+	previous := client.CheckRedirect
+	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= limit {
+			return fmt.Errorf("source redirect limit exceeded (%d)", limit)
+		}
+		if previous != nil {
+			return previous(request, via)
+		}
+		return nil
 	}
-	mediaType, _, contentTypeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if contentTypeErr != nil || !allowedContentType(mediaType, contentTypes) {
-		return nil, nextCursor, false, fmt.Errorf("unsupported source content type %q", response.Header.Get("Content-Type"))
+	return &clone
+}
+
+func retryableHTTPStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests,
+		http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
 	}
-	limit := s.BodyLimit
-	if limit <= 0 || limit > defaultHTTPBodyLimit {
-		limit = defaultHTTPBodyLimit
+}
+
+func retryDelay(base time.Duration, attempt int, retryAfter string) time.Duration {
+	if value := parseRetryAfter(retryAfter); value > 0 {
+		return value
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil {
-		return nil, nextCursor, false, err
+	delay := base
+	for index := 0; index < attempt; index++ {
+		delay *= 2
 	}
-	if int64(len(body)) > limit {
-		return nil, nextCursor, false, fmt.Errorf("source response exceeds %d bytes", limit)
+	if delay > 30*time.Second {
+		return 30 * time.Second
 	}
-	return body, nextCursor, false, nil
+	return delay
+}
+
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := time.ParseDuration(value + "s"); err == nil && seconds > 0 {
+		if seconds > 30*time.Second {
+			return 30 * time.Second
+		}
+		return seconds
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		delay := time.Until(when)
+		if delay > 0 {
+			if delay > 30*time.Second {
+				return 30 * time.Second
+			}
+			return delay
+		}
+	}
+	return 0
+}
+
+func waitRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // GitHubReleaseSource reads the public releases API without authentication.
 // The source URL should be an endpoint such as
 // https://api.github.com/repos/FalkorDB/FalkorDB/releases.
 type GitHubReleaseSource struct {
-	Source    SourceConfig
-	Client    *http.Client
-	BodyLimit int64
-	UserAgent string
+	Source       SourceConfig
+	Client       *http.Client
+	BodyLimit    int64
+	UserAgent    string
+	MaxRetries   int
+	RetryBackoff time.Duration
+	MaxRedirects int
 }
 
 var _ SourceAdapter = GitHubReleaseSource{}
@@ -173,7 +306,10 @@ func (s GitHubReleaseSource) FetchWithCursor(ctx context.Context, cursor SourceC
 	if maxItems == 0 {
 		return FetchResult{Cursor: cursor}, nil
 	}
-	rss := RSSSource{Source: s.Source, Client: s.Client, BodyLimit: s.BodyLimit, UserAgent: s.UserAgent}
+	rss := RSSSource{
+		Source: s.Source, Client: s.Client, BodyLimit: s.BodyLimit, UserAgent: s.UserAgent,
+		MaxRetries: s.MaxRetries, RetryBackoff: s.RetryBackoff, MaxRedirects: s.MaxRedirects,
+	}
 	body, nextCursor, notModified, err := rss.fetch(ctx, cursor, []string{"application/json", "application/vnd.github+json"})
 	if err != nil {
 		return FetchResult{}, err

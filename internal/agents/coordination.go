@@ -51,6 +51,7 @@ func (s TaskStatus) Valid() bool {
 var (
 	ErrInvalidTask    = errors.New("invalid agent task")
 	ErrTaskNotFound   = errors.New("agent task not found")
+	ErrLeaseLost      = errors.New("agent task lease is no longer owned")
 	ErrInvalidHandoff = errors.New("invalid agent handoff")
 	ErrTaskLeaseHeld  = errors.New("agent task lease is held by another worker")
 )

@@ -28,6 +28,7 @@ type Config struct {
 	UserGraph               string
 	DataDir                 string
 	SearchURL               string
+	SearchAllowHTTP         bool
 	OpenCodeURL             string
 	OpenCodeToken           string // Optional Bearer token for a trusted reverse proxy.
 	OpenCodeServerUsername  string
@@ -208,6 +209,14 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("NIGHTSHIFT_METRICS_PUBLIC must be true or false")
 		}
 		c.MetricsPublic = parsed
+	}
+
+	if value := os.Getenv("NIGHTSHIFT_SEARCH_ALLOW_HTTP"); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("NIGHTSHIFT_SEARCH_ALLOW_HTTP must be true or false")
+		}
+		c.SearchAllowHTTP = parsed
 	}
 
 	if err := c.Validate(); err != nil {

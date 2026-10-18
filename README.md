@@ -44,7 +44,10 @@ relationships that make those behaviors possible.
   state.
 - A framework-free dashboard shows the active graph path and persisted task
   status when FalkorDB is available.
-- Deterministic mode is the baseline; an LLM is optional and not yet wired.
+- Deterministic mode is the baseline; SearXNG, read-only Gmail/Calendar, GitHub
+  metadata, reminders, and optional OpenCode coding orchestration are wired
+  behind bounded provider interfaces. Live credentials and provider smoke tests
+  remain deployment-specific.
 
 The next vertical slice is public RSS/GitHub fixture ingestion → graph
 relationships → multi-hop recommendation → evidence path → feedback and
@@ -124,6 +127,7 @@ loader. Important settings:
 | `FALKORDB_GRAPH` | user-owned graph for this installation | `nightshift_u_demo` |
 | `FALKORDB_QUERY_TIMEOUT_MS` | bounded Cypher query timeout | `5000` |
 | `NIGHTSHIFT_DATA_DIR` | local approved-plan artifact directory | `./data` |
+| `NIGHTSHIFT_SEARCH_ALLOW_HTTP` | allow HTTP only for explicitly local SearXNG development | `false` |
 | `NIGHTSHIFT_ACTIONS_ENABLED` | approval-gated local plan execution | `false` |
 | `NIGHTSHIFT_AUTH_TOKEN` | bearer credential for a non-loopback bind | unset |
 | `NIGHTSHIFT_AUTH_USERNAME` / `NIGHTSHIFT_AUTH_PASSWORD` | Basic credential alternative to the token | unset |
@@ -173,14 +177,15 @@ curl -fsS -X POST http://127.0.0.1:8080/api/v1/recommendations/<recommendation-i
 The plan action is `proposed` until the user explicitly approves it. To enable
 the local Markdown executor for a controlled demo, set
 `NIGHTSHIFT_ACTIONS_ENABLED=true`, then call the approval and execute routes.
-GitHub writes are not exposed by the current MVP.
+GitHub publishing is not performed by the current chat coding workflow; any
+external write remains a separate approval-gated action.
 
 ## Checks
 
 Run these from the repository root after installing Go:
 
 ```bash
-gofmt -l .
+gofmt -l $(git ls-files '*.go')
 go test ./...
 go vet ./...
 go build -trimpath -o bin/nightshift ./cmd/nightshift

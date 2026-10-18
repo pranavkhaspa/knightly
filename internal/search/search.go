@@ -331,7 +331,6 @@ func parseRetryAfter(value string) time.Duration {
 	}
 	return 0
 }
-
 func validateResultURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > MaxResultURL || strings.ContainsAny(raw, "\r\n") {

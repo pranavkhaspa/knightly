@@ -6,6 +6,7 @@
 |---|---|
 | `User` | isolated user identity and preferences |
 | `Interest` | a topic the user follows |
+| `Skill` | a capability the user has |
 | `Project` | active work context |
 | `Requirement` | a structured project need |
 | `Technology` | a named tool, framework, model, or platform |
@@ -74,6 +75,7 @@ SHAs and links are persisted, but no GitHub credential is ever stored here.
 ```text
 User -[:INTERESTED_IN]-> Interest
 User -[:HAS_SKILL]-> Skill
+User -[:PREFERS]-> Technology
 User -[:OWNS]-> Project
 Project -[:HAS_REQUIREMENT]-> Requirement
 Requirement -[:NEEDS]-> Technology
